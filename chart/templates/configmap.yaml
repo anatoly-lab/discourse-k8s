@@ -50,3 +50,9 @@ data:
   UNICORN_SIDEKIQS: "0"
   # Bind to all interfaces so the Service can reach port 3000
   UNICORN_BIND_ALL: "1"
+
+  # -- Per-IP rate limits (request_tracker middleware) --
+  DISCOURSE_MAX_REQS_PER_IP_PER_10_SECONDS: {{ .Values.rateLimits.perIpPer10Seconds | quote }}
+  DISCOURSE_MAX_REQS_PER_IP_PER_MINUTE: {{ .Values.rateLimits.perIpPerMinute | quote }}
+  DISCOURSE_MAX_ASSET_REQS_PER_IP_PER_10_SECONDS: {{ .Values.rateLimits.assetPerIpPer10Seconds | quote }}
+  DISCOURSE_MAX_REQS_PER_IP_MODE: {{ .Values.rateLimits.mode | quote }}

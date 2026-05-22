@@ -244,6 +244,35 @@ If OIDC is configured, go to `/auth/oidc` to log in via your identity provider. 
 
 > **Note:** Every secret field (database, smtp, secretKeyBase, admin) supports two patterns -- an inline `password`/`value` for simple setups, or `existingSecret` + `secretKey` to reference a pre-existing Kubernetes Secret (for Vault, ESO, or similar operators).
 
+### Rate limit parameters
+
+Per-IP request budgets enforced by Discourse's `request_tracker` Rack middleware (`lib/middleware/request_tracker.rb`). Defaults mirror Discourse upstream (`config/discourse_defaults.conf`).
+
+| Name | Description | Value |
+| ---- | ----------- | ----- |
+| `rateLimits.perIpPer10Seconds` | Per-IP budget for non-asset routes, 10-second rolling window (`DISCOURSE_MAX_REQS_PER_IP_PER_10_SECONDS`) | `50` |
+| `rateLimits.perIpPerMinute` | Per-IP budget for non-asset routes, 60-second window (`DISCOURSE_MAX_REQS_PER_IP_PER_MINUTE`) | `200` |
+| `rateLimits.assetPerIpPer10Seconds` | Per-IP budget for `/assets/*`, `/uploads/*`, `/user_avatar/*`, `/svg-sprite`, etc. (`DISCOURSE_MAX_ASSET_REQS_PER_IP_PER_10_SECONDS`) | `200` |
+| `rateLimits.mode` | Enforcement mode: `block` \| `warn` \| `warn+block` \| `none` (`DISCOURSE_MAX_REQS_PER_IP_MODE`) | `block` |
+
+**Background:** [Global rate limits and throttling in Discourse](https://meta.discourse.org/t/global-rate-limits-and-throttling-in-discourse/78612).
+
+**Why tune them?** The upstream defaults assume a small forum behind nginx, which serves `/assets/*` and `/uploads/*` directly without ever hitting Rails. In a K8s deployment without a CDN or nginx in front, every asset request counts against the per-IP budget -- a single page load on a plugin-heavy install can fan out to 50+ asset requests and burn through the 200/10s asset budget, producing spurious `429`s for legitimate users.
+
+**Trade-offs:**
+- Too high: weaker DDoS / scraper protection -- a single hostile IP can saturate Pitchfork workers.
+- Too low: legitimate users (especially behind shared NAT or corporate egress) get `429`'d on normal browsing.
+
+**Community-recommended ranges:**
+
+| Profile | `perIpPer10Seconds` | `perIpPerMinute` | `assetPerIpPer10Seconds` | `mode` |
+| ------- | ------------------- | ---------------- | ------------------------ | ------ |
+| Upstream default (small forum, nginx-fronted assets) | 50 | 200 | 200 | `block` |
+| Pfaffman-recommended for typical production | 200 | 400 | 200 | `block` |
+| Plugin-heavy install without CDN | 400 | 800 | 2000 | `warn+block` |
+
+**Tip:** Set `rateLimits.mode: warn+block` while tuning -- it blocks AND logs every trip to Rails `production.log`, so you can grep `RateLimiter` to see which IPs and routes are tripping the limit before deciding whether to raise budgets.
+
 ### Sidekiq container parameters
 
 | Name | Description | Value |

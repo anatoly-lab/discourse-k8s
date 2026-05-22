@@ -131,6 +131,25 @@ discourse:
   extraEnv: []
 
 # ---------------------------------------------------------------------------
+# Per-IP rate limits
+# ---------------------------------------------------------------------------
+# Per-IP rate-limit budgets enforced by Discourse's request_tracker
+# middleware. Defaults mirror Discourse upstream
+# (config/discourse_defaults.conf). Tune higher for plugin-heavy
+# installs where a single page load fans out to many asset requests.
+# Reference: https://meta.discourse.org/t/global-rate-limits-and-throttling-in-discourse/78612
+rateLimits:
+  # Per-IP budget for non-asset routes, 10-second rolling window
+  perIpPer10Seconds: 50
+  # Per-IP budget for non-asset routes, 60-second window
+  perIpPerMinute: 200
+  # Per-IP budget for /assets/*, /uploads/*, /user_avatar/*, /svg-sprite, etc.
+  assetPerIpPer10Seconds: 200
+  # Enforcement mode: block | warn | warn+block | none
+  # `warn+block` blocks AND logs trips (useful while tuning)
+  mode: block
+
+# ---------------------------------------------------------------------------
 # Sidekiq container resources
 # ---------------------------------------------------------------------------
 # Separate resource configuration for the Sidekiq container.
