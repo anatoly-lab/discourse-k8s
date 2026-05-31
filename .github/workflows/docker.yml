@@ -69,7 +69,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/anatoly314/discourse-k8s
+          images: ghcr.io/${{ github.repository_owner }}/discourse-k8s
           tags: |
             # On tag push: version with platform suffix
             type=raw,value=${{ steps.version.outputs.value }}-amd64,enable=${{ steps.version.outputs.is_release }}
@@ -128,7 +128,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/anatoly314/discourse-k8s
+          images: ghcr.io/${{ github.repository_owner }}/discourse-k8s
           tags: |
             # On tag push: version with platform suffix
             type=raw,value=${{ steps.version.outputs.value }}-arm64,enable=${{ steps.version.outputs.is_release }}
@@ -175,7 +175,7 @@ jobs:
 
       - name: Create multi-arch manifest
         env:
-          IMAGE: ghcr.io/anatoly314/discourse-k8s
+          IMAGE: ghcr.io/${{ github.repository_owner }}/discourse-k8s
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           docker buildx imagetools create \
@@ -186,7 +186,7 @@ jobs:
 
       - name: Inspect manifest
         env:
-          IMAGE: ghcr.io/anatoly314/discourse-k8s
+          IMAGE: ghcr.io/${{ github.repository_owner }}/discourse-k8s
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           docker buildx imagetools inspect "${IMAGE}:${VERSION}"

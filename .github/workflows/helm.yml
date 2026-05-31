@@ -84,4 +84,4 @@ jobs:
       - name: Push chart to GHCR
         run: |
           helm push "discourse-${{ steps.version.outputs.value }}.tgz" \
-            oci://ghcr.io/anatoly314/helm-charts
+            oci://ghcr.io/${{ github.repository_owner }}/helm-charts
