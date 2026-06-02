@@ -173,6 +173,28 @@ initContainers:
       pullPolicy: IfNotPresent
 
 # ---------------------------------------------------------------------------
+# Theme-CSS warmup
+# ---------------------------------------------------------------------------
+# Discourse compiles the theme+plugin CSS bundle via V8/PostCSS on the first
+# HTML render when the on-disk file is missing. On ephemeral-fs pods that file
+# is gone after every restart, so the first user request would freeze ~15-20s.
+# This runs `rake assets:precompile:css` as an init container (after migrate,
+# DB + Redis up) and shares the compiled output with the web container via an
+# emptyDir mounted at /var/www/discourse/tmp/stylesheet-cache.
+stylesheetWarmup:
+  enabled: true
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    # The warmup compiles all theme/color-scheme variants; give it OOM
+    # headroom. Because init containers count as max(init, sum(app
+    # containers)) — not additive — this limit is effectively free up to the
+    # pod's combined app-container limits.
+    limits:
+      memory: 3Gi
+
+# ---------------------------------------------------------------------------
 # Persistent storage
 # ---------------------------------------------------------------------------
 # Mount paths use standard Discourse layout under /var/www/discourse.
@@ -259,7 +281,14 @@ affinity: {}
 # ---------------------------------------------------------------------------
 podAnnotations: {}
 podLabels: {}
-podSecurityContext: {}
+podSecurityContext:
+  # discourse user/group is uid/gid 1000 (discourse/base image). The shared
+  # stylesheet-cache emptyDir is created root-owned by default; fsGroup makes
+  # it group-writable so the warm-css init and web containers (both uid 1000)
+  # can write/read it. OnRootMismatch avoids re-chowning the uploads PVC on
+  # every restart.
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
 securityContext: {}
 
 restartPolicy: Always

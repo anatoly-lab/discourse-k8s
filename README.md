@@ -7,26 +7,26 @@ Created because no well-maintained, free Helm chart exists for Discourse. Bitnam
 ## Architecture
 
 ```
-+------------------------------------------------------------------+
-|  Pod                                                             |
-|                                                                  |
-|  initContainers (sequential after redis sidecar starts):         |
-|  +--------------------+  +----------------+  +--------------+   |
-|  | wait-for-postgres  |->|    migrate     |->| create-admin |   |
-|  |  (busybox:nc)      |  | rake db:migrate|  | (first boot) |   |
-|  +--------------------+  +----------------+  +--------------+   |
-|                                                                  |
-|  containers:                                                     |
-|  +--------------------+  +--------------------+  +-----------+   |
-|  |       web          |  |     sidekiq        |  |   redis   |   |
-|  |                    |  |                    |  |  (native  |   |
-|  |  pitchfork :3000   |  |  background jobs   |  |  sidecar) |   |
-|  |  (web server)      |  |  (job processor)   |  |  :6379    |   |
-|  +--------------------+  +--------------------+  +-----------+   |
-|          |                        |                   ^           |
-|          +------------------------+-------------------+           |
-|          |                                                       |
-+----------|-------------------------------------------------------+
++----------------------------------------------------------------------------+
+|  Pod                                                                       |
+|                                                                            |
+|  initContainers (sequential after redis sidecar starts):                   |
+|  +-----------------+ +---------------+ +----------------+ +--------------+ |
+|  |wait-for-postgres|>|    migrate    |>|    warm-css    |>| create-admin | |
+|  |  (busybox:nc)   | |rake db:migrate| | precompile CSS | | (first boot) | |
+|  +-----------------+ +---------------+ +----------------+ +--------------+ |
+|                                                                            |
+|  containers:                                                               |
+|  +--------------------+  +--------------------+  +-----------+             |
+|  |       web          |  |     sidekiq        |  |   redis   |             |
+|  |                    |  |                    |  |  (native  |             |
+|  |  pitchfork :3000   |  |  background jobs   |  |  sidecar) |             |
+|  |  (web server)      |  |  (job processor)   |  |  :6379    |             |
+|  +--------------------+  +--------------------+  +-----------+             |
+|          |                        |                   ^                    |
+|          +------------------------+-------------------+                    |
+|          |                                                                 |
++----------|-----------------------------------------------------------------+
            |
     +------v-------+
     |  PostgreSQL   |     (external, e.g. CNPG)
@@ -46,7 +46,8 @@ The pod runs three containers from two images:
 1. **redis** (native sidecar) -- Starts first with `restartPolicy: Always`, which makes it a sidecar init container that keeps running alongside regular containers. This is a Kubernetes 1.28+ feature.
 2. **wait-for-postgres** -- Polls the PostgreSQL host with `nc` until it responds.
 3. **migrate** -- Runs `bundle exec rake db:migrate`. Migrations acquire a distributed mutex via Redis to prevent concurrent runs, which is why Redis must be running before this step.
-4. **create-admin** -- Creates the admin user if it doesn't exist (first boot only). Uses the email from `discourse.developerEmails` and password from `discourse.admin.existingSecret`. Idempotent -- skips if the user already exists. Only runs when an admin password is configured.
+4. **warm-css** -- Runs `bundle exec rake assets:precompile:css`, pre-compiling theme and plugin CSS into a shared `emptyDir` that the web container also mounts, so the first request doesn't pay the ~15-20s cold V8/PostCSS compile that Discourse otherwise runs inline on an ephemeral pod filesystem. Gated by `stylesheetWarmup.enabled` -- skipped entirely when disabled.
+5. **create-admin** -- Creates the admin user if it doesn't exist (first boot only). Uses the email from `discourse.developerEmails` and password from `discourse.admin.existingSecret`. Idempotent -- skips if the user already exists. Only runs when an admin password is configured.
 
 ### Why Redis as a native sidecar?
 
@@ -290,6 +291,15 @@ Per-IP request budgets enforced by Discourse's `request_tracker` Rack middleware
 | `initContainers.waitForPostgres.image.tag` | Wait-for-postgres init container image tag | `"1.37"` |
 | `initContainers.waitForPostgres.image.pullPolicy` | Wait-for-postgres init container image pull policy | `IfNotPresent` |
 
+### Theme-CSS warmup parameters
+
+| Name | Description | Value |
+| ---- | ----------- | ----- |
+| `stylesheetWarmup.enabled` | Run the warm-css init container that precompiles theme CSS before serving (prevents a cold ~15-20s compile on the first request) | `true` |
+| `stylesheetWarmup.resources.requests.memory` | warm-css init container memory request | `1Gi` |
+| `stylesheetWarmup.resources.requests.cpu` | warm-css init container CPU request | `500m` |
+| `stylesheetWarmup.resources.limits.memory` | warm-css init container memory limit (sized for OOM headroom; effectively free since init resources count as max, not sum) | `3Gi` |
+
 ### Persistence parameters
 
 | Name | Description | Value |
@@ -346,7 +356,7 @@ Per-IP request budgets enforced by Discourse's `request_tracker` Rack middleware
 | `affinity` | Affinity rules for pod scheduling | `{}` |
 | `podAnnotations` | Additional annotations for the pod | `{}` |
 | `podLabels` | Additional labels for the pod | `{}` |
-| `podSecurityContext` | Security context for the pod | `{}` |
+| `podSecurityContext` | Pod-level security context. Defaults set fsGroup so the shared stylesheet-cache emptyDir is writable by the discourse user (uid/gid 1000) | `{"fsGroup":1000,"fsGroupChangePolicy":"OnRootMismatch"}` |
 | `securityContext` | Security context for the web and sidekiq containers | `{}` |
 | `restartPolicy` | Pod restart policy | `Always` |
 | `terminationGracePeriodSeconds` | Seconds the pod needs to terminate gracefully | `60` |
