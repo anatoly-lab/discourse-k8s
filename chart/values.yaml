@@ -104,6 +104,48 @@ discourse:
     existingSecret: ""
     secretKey: secret-key-base
 
+  # -- S3 object storage (optional) --
+  # Stores uploads (and optionally backups) in an S3-compatible bucket instead
+  # of the local uploads PVC. Works with AWS S3, MinIO, Cloudflare R2, GCS
+  # (via the interop endpoint), etc.
+  #
+  # IMPORTANT: there is no single "enable" env var in Discourse. The engine's
+  # GlobalSetting.use_s3? turns itself on automatically once it sees a bucket,
+  # a region, AND credentials (or an IAM profile). So setting bucket + region +
+  # keys/IAM below is what actually activates S3. (We still render
+  # DISCOURSE_USE_S3 for parity with Discourse's official docker S3 template,
+  # but in this release it is a harmless no-op -- the trio above is the switch.)
+  s3:
+    enabled: false
+    # AWS-style region. For S3-compatible providers use the value the provider
+    # expects (e.g. "auto" for R2, "us-east-1" as a generic default for MinIO).
+    region: ""
+    # Bucket that holds uploads. May be "bucket" or "bucket/path-prefix".
+    bucket: ""
+    # Custom endpoint for non-AWS providers (MinIO / R2 / GCS). Leave empty for
+    # real AWS S3. Must be a full URL, e.g. https://<accountid>.r2.cloudflarestorage.com
+    endpoint: ""
+    # Optional CDN in front of the bucket for serving uploads.
+    cdnUrl: ""
+    # When true, authenticate via the pod's IAM role (EKS IRSA / instance
+    # profile) and OMIT the access keys entirely -- no secret is rendered.
+    useIamProfile: false
+    # Inline credentials (ignored when useIamProfile=true or existingSecret set).
+    accessKeyId: ""
+    secretAccessKey: ""
+    # Use an existing Secret for the S3 credentials instead of inline values.
+    # Mirrors the database/smtp existingSecret pattern.
+    existingSecret: ""
+    secretKeys:
+      accessKeyId: s3-access-key-id
+      secretAccessKey: s3-secret-access-key
+    # Store database backups in S3 as well. Reuses the same region/credentials.
+    backups:
+      enabled: false
+      # Bucket for backups. Often the same as `bucket` with a different prefix,
+      # or a dedicated bucket. Required when backups.enabled=true.
+      bucket: ""
+
   # -- Serving --
   # Serve static assets directly from Unicorn (no nginx in front)
   serveStaticAssets: true
@@ -317,11 +359,44 @@ serviceAccount:
   name: ""
 
 # ---------------------------------------------------------------------------
+# Common metadata (applied to EVERY resource this chart renders)
+# ---------------------------------------------------------------------------
+# Labels merged into the shared label set, so they land on the Deployment,
+# Service, ConfigMap, Secret, Ingress, ServiceAccount and PVCs. NOT added to
+# the immutable selector labels, so they're safe to change on an existing
+# release. Handy for GitOps (e.g. ArgoCD instance/team tags).
+commonLabels: {}
+# Annotations merged into metadata.annotations of every rendered resource.
+# Existing per-resource annotations (e.g. the PVC's helm.sh/resource-policy)
+# are preserved, not clobbered.
+commonAnnotations: {}
+
+# ---------------------------------------------------------------------------
 # Pod scheduling
 # ---------------------------------------------------------------------------
 nodeSelector: {}
 tolerations: []
 affinity: {}
+# Assign the pod to a PriorityClass (must already exist in the cluster). Left
+# empty by default so no PriorityClass is required.
+priorityClassName: ""
+
+# ---------------------------------------------------------------------------
+# Extra volumes / volume mounts (escape hatch)
+# ---------------------------------------------------------------------------
+# Arbitrary extra pod volumes and the mounts that attach them to BOTH the web
+# and sidekiq containers. Use for secrets, projected tokens, extra config, etc.
+# Example:
+#   extraVolumes:
+#     - name: extra-config
+#       configMap:
+#         name: my-extra-config
+#   extraVolumeMounts:
+#     - name: extra-config
+#       mountPath: /etc/discourse/extra
+#       readOnly: true
+extraVolumes: []
+extraVolumeMounts: []
 
 # ---------------------------------------------------------------------------
 # Pod metadata and security
@@ -336,7 +411,27 @@ podSecurityContext:
   # every restart.
   fsGroup: 1000
   fsGroupChangePolicy: OnRootMismatch
-securityContext: {}
+# Container-level securityContext applied to the web + sidekiq containers.
+securityContext:
+  # The image's Dockerfile ends with `USER discourse` (uid/gid 1000); refuse to
+  # start if some future base image regresses to root.
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  # A compromised process can't sudo/setuid its way to higher privileges.
+  allowPrivilegeEscalation: false
+  # MUST stay false: Discourse writes to tmp/ (pids, sockets, the pitchfork
+  # mold) and to the on-disk stylesheet cache at runtime, so the root fs has to
+  # be writable. We still drop everything else below.
+  readOnlyRootFilesystem: false
+  capabilities:
+    # Discourse needs no Linux capabilities; drop the whole default set.
+    drop:
+      - ALL
+  seccompProfile:
+    # Use the container runtime's default seccomp profile instead of running
+    # unconfined (the K8s default when this is unset).
+    type: RuntimeDefault
 
 restartPolicy: Always
 terminationGracePeriodSeconds: 60

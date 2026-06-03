@@ -39,11 +39,19 @@ LABEL org.opencontainers.image.title="Discourse (AnkiMCP)" \
 # discourse/base:slim ships pg_dump 15, but our CNPG cluster runs PG 17.
 # pg_dump refuses to dump a newer server, breaking Discourse's built-in
 # backup feature. Install the PG 17 client from the official PGDG repo.
+#
+# This block also runs `apt-get upgrade -y` to pull base-layer security patches
+# (the base image does not upgrade installed packages itself). Tradeoff: builds
+# become slightly less reproducible since the upgraded package set depends on
+# what's current in the apt repos at build time -- an acceptable cost for CVE
+# patching.
 # =============================================================================
 ARG PG_MAJOR=17
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends postgresql-client-${PG_MAJOR} && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # =============================================================================
 # Pin Discourse to the requested version
@@ -197,6 +205,17 @@ ENV RAILS_ENV=production \
     DISCOURSE_SERVE_STATIC_ASSETS=true
 
 EXPOSE 3000
+
+# =============================================================================
+# Strip setuid/setgid bits (defense-in-depth, portable Bitnami practice)
+# =============================================================================
+# We run as the unprivileged `discourse` user and never need setuid helpers at
+# runtime, so clear the setuid/setgid bits on every on-disk binary to blunt
+# privilege-escalation paths if the container is ever compromised. -xdev keeps
+# the scan on the image filesystem (never traverses mounted volumes). Verified
+# NOT already done by discourse/base:slim.
+# =============================================================================
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
 
 # Drop from root to the discourse user. Build steps above use sudo -u discourse
 # for file operations; at runtime there's no reason to stay root.

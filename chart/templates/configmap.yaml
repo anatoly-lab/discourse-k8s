@@ -4,6 +4,10 @@ metadata:
   name: {{ include "discourse.configmapName" . }}
   labels:
     {{- include "discourse.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 data:
   # -- Site identity --
   DISCOURSE_HOSTNAME: {{ required "discourse.hostname is required" .Values.discourse.hostname | quote }}
@@ -39,6 +43,32 @@ data:
   DISCOURSE_SMTP_AUTHENTICATION: {{ .Values.discourse.smtp.authentication | quote }}
   {{- end }}
   DISCOURSE_SMTP_ENABLE_START_TLS: {{ .Values.discourse.smtp.enableStartTls | quote }}
+
+  {{- if .Values.discourse.s3.enabled }}
+  # -- S3 object storage --
+  # Non-secret S3 settings. Discourse auto-enables S3 once it sees
+  # bucket + region + (IAM | access keys); see values.yaml for the details.
+  # DISCOURSE_USE_S3 is rendered for parity with Discourse's docker S3 template
+  # but is inert in this release -- the bucket/region/creds trio is the switch.
+  DISCOURSE_USE_S3: "true"
+  DISCOURSE_S3_REGION: {{ required "discourse.s3.region is required when discourse.s3.enabled" .Values.discourse.s3.region | quote }}
+  DISCOURSE_S3_BUCKET: {{ required "discourse.s3.bucket is required when discourse.s3.enabled" .Values.discourse.s3.bucket | quote }}
+  {{- if .Values.discourse.s3.endpoint }}
+  DISCOURSE_S3_ENDPOINT: {{ .Values.discourse.s3.endpoint | quote }}
+  {{- end }}
+  {{- if .Values.discourse.s3.cdnUrl }}
+  DISCOURSE_S3_CDN_URL: {{ .Values.discourse.s3.cdnUrl | quote }}
+  {{- end }}
+  {{- if .Values.discourse.s3.useIamProfile }}
+  DISCOURSE_S3_USE_IAM_PROFILE: "true"
+  {{- end }}
+  {{- if .Values.discourse.s3.backups.enabled }}
+  # backup_location / s3_backup_bucket are site settings; Discourse shadows them
+  # from the matching DISCOURSE_* env vars at boot.
+  DISCOURSE_BACKUP_LOCATION: "s3"
+  DISCOURSE_S3_BACKUP_BUCKET: {{ required "discourse.s3.backups.bucket is required when discourse.s3.backups.enabled" .Values.discourse.s3.backups.bucket | quote }}
+  {{- end }}
+  {{- end }}
 
   # -- Serving --
   DISCOURSE_SERVE_STATIC_ASSETS: {{ .Values.discourse.serveStaticAssets | quote }}

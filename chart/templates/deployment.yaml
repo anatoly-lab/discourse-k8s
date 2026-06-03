@@ -4,6 +4,10 @@ metadata:
   name: {{ include "discourse.fullname" . }}
   labels:
     {{- include "discourse.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: 1
   strategy:
@@ -32,6 +36,11 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "discourse.serviceAccountName" . }}
+      # Discourse never calls the Kubernetes API. Without this, the default SA's
+      # token would be auto-mounted into every container. (serviceaccount.yaml
+      # sets this on the SA itself, but only when serviceAccount.create=true --
+      # which defaults to false -- so this pod-level field is the real fix.)
+      automountServiceAccountToken: false
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -79,6 +88,8 @@ spec:
             runAsUser: 999
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
           {{- with .Values.redis.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -294,6 +305,9 @@ spec:
             - name: backups
               mountPath: {{ .Values.persistence.backups.mountPath }}
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -346,6 +360,9 @@ spec:
             - name: backups
               mountPath: {{ .Values.persistence.backups.mountPath }}
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- with .Values.sidekiq.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -372,7 +389,13 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "discourse.backupsPvcName" . }}
         {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
 
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

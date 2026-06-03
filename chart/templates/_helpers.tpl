@@ -31,6 +31,8 @@ Create chart name and version as used by the chart label.
 
 {{/*
 Common labels.
+.Values.commonLabels are merged in here (but NOT into selectorLabels, which
+are immutable on an existing Deployment).
 */}}
 {{- define "discourse.labels" -}}
 helm.sh/chart: {{ include "discourse.chart" . }}
@@ -39,6 +41,21 @@ helm.sh/chart: {{ include "discourse.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Common annotations.
+Renders the YAML body of .Values.commonAnnotations (no leading "annotations:"
+key) so callers can merge it under an existing or new metadata.annotations.
+Emits nothing when commonAnnotations is empty.
+*/}}
+{{- define "discourse.commonAnnotations" -}}
+{{- with .Values.commonAnnotations }}
+{{- toYaml . }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -92,6 +109,28 @@ Chart-managed Secret name (for inline passwords).
 {{- end }}
 
 {{/*
+S3 inline credentials: should the chart-managed Secret hold the S3 keys?
+True when S3 is on, NOT using an IAM profile, NO existingSecret is supplied,
+and both inline keys are set.
+*/}}
+{{- define "discourse.s3.useInlineKeys" -}}
+{{- if and .Values.discourse.s3.enabled (not .Values.discourse.s3.useIamProfile) (not .Values.discourse.s3.existingSecret) .Values.discourse.s3.accessKeyId .Values.discourse.s3.secretAccessKey -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+S3 secret env: should the containers reference S3 creds via secretKeyRef?
+True when S3 is on, NOT using an IAM profile, and credentials come from either
+an existingSecret or the chart-managed Secret (inline keys).
+*/}}
+{{- define "discourse.s3.useSecretKeys" -}}
+{{- if and .Values.discourse.s3.enabled (not .Values.discourse.s3.useIamProfile) (or .Values.discourse.s3.existingSecret (include "discourse.s3.useInlineKeys" .)) -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
 Determine if the chart-managed Secret should be created.
 True when at least one inline password is provided and no existingSecret
 is set for that credential.
@@ -108,6 +147,9 @@ is set for that credential.
   {{- $create = true -}}
 {{- end -}}
 {{- if and .Values.discourse.admin.password (not .Values.discourse.admin.existingSecret) -}}
+  {{- $create = true -}}
+{{- end -}}
+{{- if include "discourse.s3.useInlineKeys" . -}}
   {{- $create = true -}}
 {{- end -}}
 {{- if $create -}}
@@ -128,6 +170,9 @@ Used to conditionally render the env: key in container specs.
   {{- $has = true -}}
 {{- end -}}
 {{- if or .Values.discourse.secretKeyBase.existingSecret (and (include "discourse.createSecret" .) .Values.discourse.secretKeyBase.value) -}}
+  {{- $has = true -}}
+{{- end -}}
+{{- if include "discourse.s3.useSecretKeys" . -}}
   {{- $has = true -}}
 {{- end -}}
 {{- if .Values.discourse.extraEnv -}}
@@ -165,6 +210,18 @@ can be conditionally rendered.
     secretKeyRef:
       name: {{ default (include "discourse.secretName" .) .Values.discourse.secretKeyBase.existingSecret }}
       key: {{ .Values.discourse.secretKeyBase.secretKey }}
+{{- end }}
+{{- if include "discourse.s3.useSecretKeys" . }}
+- name: DISCOURSE_S3_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ default (include "discourse.secretName" .) .Values.discourse.s3.existingSecret }}
+      key: {{ .Values.discourse.s3.secretKeys.accessKeyId }}
+- name: DISCOURSE_S3_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ default (include "discourse.secretName" .) .Values.discourse.s3.existingSecret }}
+      key: {{ .Values.discourse.s3.secretKeys.secretAccessKey }}
 {{- end }}
 {{- end }}
 
