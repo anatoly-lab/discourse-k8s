@@ -304,6 +304,12 @@ Per-IP request budgets enforced by Discourse's `request_tracker` Rack middleware
 
 Ptrace-free, in-process introspection for capturing where a web request is blocked when external tracers can't attach (the cluster runs `ptrace_scope=2`). Both are scoped to the **web container only**, are OFF by default, and add zero overhead when off. Each toggle sets an env var (`DISCOURSE_DIAG_RBTRACE` / `DISCOURSE_DIAG_SIGDUMP`) that a Rails initializer baked into the image reads and `require`s the gem from — *after* Bundler has set up the bundle, so the bundled gem actually loads. (We can't use `RUBYOPT`: its preloads run at interpreter startup, before Bundler puts the bundle on the load path, so a bundled gem isn't loadable and the pod crashes at boot.) **Requires image tag `v0.10.0` or newer** (the one that ships the initializer); on an older image the toggle is simply inert. See [Diagnosing a request freeze](#diagnosing-a-request-freeze) for capture commands.
 
+**One image and chart for dev *and* prod.** These toggles default to `false`, so the same image and chart run unchanged in both environments — the baked-in diagnostic gems are never `require`d, with zero runtime cost. The image always runs `RAILS_ENV=production`; "debug" here means *loading a diagnostic gem*, not Rails development mode. So you don't build or maintain a separate "debug image":
+
+- **Prod:** leave diagnostics **off**. Flip a toggle on only to capture a specific incident, then turn it back off.
+- **Dev:** enable whenever useful — same flags, same image.
+- A toggle changes a container env var, so it takes effect on the **next pod roll**, not hot: `helm upgrade … --set diagnostics.sigdump.enabled=true` rolls the web pod (with `strategy: Recreate` + 1 replica, a brief restart) and the gem loads at the new pod's boot. Set it back to `false` and upgrade again to fully unload it.
+
 | Name | Description | Value |
 | ---- | ----------- | ----- |
 | `diagnostics.rbtrace.enabled` | Sets `DISCOURSE_DIAG_RBTRACE=1`, so the image initializer `require`s `rbtrace` for live method/backtrace tracing over a SysV message queue. Ships in Discourse core. **Best-effort:** attaching needs the node's `kernel.msgmax`/`kernel.msgmnb` raised; on a stock node the attach fails. Prefer sigdump. | `false` |
@@ -651,14 +657,21 @@ Each toggle sets an env var (`DISCOURSE_DIAG_RBTRACE` / `DISCOURSE_DIAG_SIGDUMP`
 
 > **Start with sigdump.** It works on a stock cluster (pure signal + file dump). rbtrace is best-effort here: its SysV message queue won't attach unless the node's `kernel.msgmax`/`kernel.msgmnb` are raised (verified failing on a stock node with `msgmax=8192`/`msgmnb=16384`), and rbtrace 0.5.3 is fragile on Ruby 3.4.
 
-Enable one (or both). With `strategy: Recreate` and a single replica, the `helm upgrade` itself rolls the pod, so the new env var takes effect once the new pod is `Ready`:
+Enable sigdump (and ensure the image is `v0.10.0`+). With `strategy: Recreate` and a single replica, the `helm upgrade` itself rolls the pod, so the new env var takes effect once the new pod is `Ready`:
 
 ```bash
-helm upgrade discourse oci://ghcr.io/<owner>/charts/discourse \
+helm upgrade discourse oci://ghcr.io/<owner>/helm-charts/discourse \
   -n discourse --reuse-values \
-  --set diagnostics.rbtrace.enabled=true \
+  --set image.tag=v0.10.0 \
   --set diagnostics.sigdump.enabled=true
 kubectl rollout status deploy/discourse -n discourse
+```
+
+…then capture (below). When you're done, disable it again so the gem unloads:
+
+```bash
+helm upgrade discourse oci://ghcr.io/<owner>/helm-charts/discourse \
+  -n discourse --reuse-values --set diagnostics.sigdump.enabled=false
 ```
 
 List the pitchfork processes — a mold plus N workers — and pick the pid(s) to inspect (you often won't know which worker holds the stuck request, so be ready to check several):
