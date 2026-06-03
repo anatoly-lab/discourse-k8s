@@ -34,11 +34,23 @@ LABEL org.opencontainers.image.title="Discourse (AnkiMCP)" \
       org.opencontainers.image.licenses="GPL-2.0-only"
 
 # =============================================================================
-# Upgrade PostgreSQL client to match the server version
+# Upgrade PostgreSQL client to match (or exceed) the server version
 # =============================================================================
-# discourse/base:slim ships pg_dump 15, but our CNPG cluster runs PG 17.
-# pg_dump refuses to dump a newer server, breaking Discourse's built-in
-# backup feature. Install the PG 17 client from the official PGDG repo.
+# discourse/base:slim ships pg_dump 15, but our CNPG cluster runs PG 18
+# (server upgraded 17 -> 18 on 2026-05-11). pg_dump HARD-REFUSES to dump a
+# server whose major version is newer than the client -- there is no override
+# flag -- which breaks Discourse's built-in backup (Sidekiq CreateBackup ->
+# "pg_dump: error: aborting because of server version mismatch"). Install the
+# PG 18 client from the official PGDG repo so pg_dump >= the server major.
+#
+# On Debian /usr/bin/pg_dump is a symlink to pg_wrapper, which auto-selects the
+# NEWEST installed client version. The base's 15 + this 18 means the wrapper
+# resolves pg_dump/pg_restore/psql/pg_dumpall to 18 (verify: pg_dump --version
+# -> 18.x). A PG 18 client can still dump older servers (client major >= server
+# major), so this stays correct if the server is ever rolled back.
+#
+# Going forward: keep PG_MAJOR >= the server major. The client lagged the
+# 17->18 server upgrade, which is what broke backups.
 #
 # This block also runs `apt-get upgrade -y` to pull base-layer security patches
 # (the base image does not upgrade installed packages itself). Tradeoff: builds
@@ -46,7 +58,7 @@ LABEL org.opencontainers.image.title="Discourse (AnkiMCP)" \
 # what's current in the apt repos at build time -- an acceptable cost for CVE
 # patching.
 # =============================================================================
-ARG PG_MAJOR=17
+ARG PG_MAJOR=18
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends postgresql-client-${PG_MAJOR} && \

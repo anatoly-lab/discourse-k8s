@@ -485,7 +485,7 @@ The final build step bakes a `config/git-utils-overrides.json` file and then del
 |-----|---------|-------------|
 | `BASE_IMAGE` | `discourse/base:slim` | Base image providing Ruby, Node, and system dependencies |
 | `DISCOURSE_VERSION` | `v2026.3.0-latest.1` | Discourse release tag to check out and build |
-| `PG_MAJOR` | `17` | PostgreSQL client version to install (must match your PG server) |
+| `PG_MAJOR` | `18` | PostgreSQL client version to install (must be >= your PG server major, or `pg_dump` refuses to back up) |
 
 ### Build examples
 
@@ -529,7 +529,7 @@ These environment variables are set in the Dockerfile as runtime defaults:
 | ---- | ----------- | ------------- |
 | `BASE_IMAGE` | Base image used as the build foundation | `discourse/base:slim` |
 | `DISCOURSE_VERSION` | Discourse release tag to check out from the repository | `v2026.3.0-latest.1` |
-| `PG_MAJOR` | PostgreSQL client version (must match your PG server for backups to work) | `17` |
+| `PG_MAJOR` | PostgreSQL client version (must be >= your PG server major for backups to work) | `18` |
 
 ## CI/CD
 
