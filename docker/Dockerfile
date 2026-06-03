@@ -200,6 +200,54 @@ RUN sudo -u discourse env \
     bundle exec rake assets:precompile
 
 # =============================================================================
+# Freeze git version info, then drop the .git directory (after-idle freeze fix)
+# =============================================================================
+# ROOT CAUSE of the ~14s after-idle staff-page freeze (captured live, twice,
+# via sigdump): the homepage render serializes CurrentUserSerializer, whose
+# #has_unseen_features -> DiscourseUpdates.new_features calls
+# GitUtils.has_commit?, which shells out to
+#   `git merge-base --is-ancestor <sha> HEAD`
+# On a cold worker (post-idle) that subprocess cold-reads the ~122MB shallow
+# .git and forks from a ~460MB pitchfork worker -- the worker parks in
+# do_sys_poll on the subprocess pipe, zero CPU, for ~14s. It only hits staff
+# (has_unseen_features is staff-gated) and only for cached "what's new" entries
+# whose discourse_version is a full 40-char SHA -- has_commit? early-returns
+# false (no fork) for plain version strings.
+#
+# Fix: this is an immutable image (rebuilt per release, never `git pull`), so
+# the runtime .git is dead weight. We:
+#   1. Bake config/git-utils-overrides.json. Discourse core's
+#      GitUtils.filesystem_overrides reads this JSON (keys: git_version,
+#      git_branch, full_version) and skips the `git rev-parse` / `git describe`
+#      shell-outs for version reporting. A missing file is handled upstream
+#      (Errno::ENOENT -> {}), so this is purely additive.
+#      full_version is set to "<tag>-customized" on purpose. Upstream's
+#      `git describe --dirty` would ALWAYS append "-dirty" here, because an
+#      earlier build step edits a tracked file (appends `gem "sigdump"` to the
+#      Gemfile) -- so the Discourse working tree is dirty on every build. A
+#      constant "-dirty" is noise; "-customized" instead truthfully marks this
+#      as the discourse-k8s build (not stock upstream) in the admin Version
+#      panel. git_version stays the real HEAD SHA (the exact pinned commit).
+#   2. rm -rf .git. Now has_commit?'s `git merge-base` fails fast ("not a git
+#      repository", exit 128); try_git's `2>/dev/null; echo $?` wrapper swallows
+#      it and returns "128" != "0" -> false. Silent, no pack read, no freeze.
+#      Bonus: ~122MB smaller image.
+#
+# NOTE: filesystem_overrides does NOT cover has_commit? (it calls try_git
+# directly), so removing .git -- not the overrides file -- is what kills the
+# freeze; the overrides file only keeps the admin "Version" panel accurate.
+# Runs AFTER assets:precompile so precompile still sees the real repo (the
+# baked git_version equals the real HEAD, so nothing goes inconsistent).
+# =============================================================================
+RUN set -eu; \
+    cd /var/www/discourse; \
+    git_version="$(sudo -u discourse git rev-parse HEAD)"; \
+    printf '{"git_version":"%s","git_branch":"%s","full_version":"%s"}\n' \
+        "$git_version" "${DISCOURSE_VERSION}" "${DISCOURSE_VERSION}-customized" \
+        | sudo -u discourse tee config/git-utils-overrides.json > /dev/null; \
+    sudo -u discourse rm -rf .git
+
+# =============================================================================
 # Runtime environment defaults
 # =============================================================================
 # UNICORN_SIDEKIQS=0        — Do NOT spawn Sidekiq from the web server process.

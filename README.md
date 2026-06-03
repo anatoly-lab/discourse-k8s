@@ -453,15 +453,31 @@ If you prefer manual control, skip the env vars entirely and toggle plugins thro
 
 ## Building the Custom Image
 
-The [`docker/Dockerfile`](docker/Dockerfile) builds a production-ready Discourse image in five steps:
+The [`docker/Dockerfile`](docker/Dockerfile) builds a production-ready Discourse image in six steps:
 
 1. **Starts from `discourse/base:slim`** -- Official Discourse base image with Ruby, Node, pnpm, ImageMagick, and PostgreSQL client. No bundled database or Redis.
 2. **Pins the Discourse release** -- Checks out the exact release tag (e.g. `v2026.3.0-latest`) from the Discourse repo already cloned in the base image.
 3. **Installs Ruby gems** -- adds the `sigdump` diagnostics gem to the bundle (`require: false`, so it stays inert until `diagnostics.sigdump.enabled` opts in), then `bundle install --deployment` with exact Gemfile.lock versions. `rbtrace` is already in Discourse core's Gemfile. Also drops a Rails initializer (`config/initializers/discourse_k8s_diagnostics.rb`) that `require`s these gems when the chart's diagnostics env vars are set -- loaded in-app *after* Bundler.setup (a bundled gem can't be loaded via `RUBYOPT`, which preloads before the bundle is on the load path).
 4. **Installs JavaScript dependencies** -- `pnpm install --frozen-lockfile` (or yarn, for forward compat).
 5. **Precompiles assets** -- `bundle exec rake assets:precompile` with `SKIP_DB_AND_REDIS=1` so no live database is needed during the build.
+6. **Freezes version info and drops `.git`** -- bakes `config/git-utils-overrides.json` so Discourse reports its version without shelling out to git, then `rm -rf .git`. This fixes a staff-only request freeze and shrinks the image ~122 MB. See [Version reporting and the request-freeze fix](#version-reporting-and-the-request-freeze-fix) below.
 
 The image defaults to running **Pitchfork** (Discourse's unicorn successor) as the web server. The same image is used for the sidekiq container and the migrate init container with different commands.
+
+### Version reporting and the request-freeze fix
+
+The final build step bakes a `config/git-utils-overrides.json` file and then deletes the `.git` directory. This is both a correctness fix and a performance fix.
+
+**The problem.** Discourse's `GitUtils` shells out to the `git` binary at runtime to report its version and to check commits. One of those calls -- `GitUtils.has_commit?`, reached when an admin/staff user's homepage is rendered (`CurrentUserSerializer#has_unseen_features` → `DiscourseUpdates.new_features`) -- runs `git merge-base --is-ancestor <sha> HEAD`. On a worker whose page cache has gone cold (e.g. after the pod sat idle), that subprocess has to cold-read the ~122 MB shallow `.git` and fork from a large worker process, parking the request for **~14 seconds** with zero CPU. It only affects **staff** (the call is staff-gated) and only fires for cached "what's new" entries whose version is a full commit SHA, so it shows up as "an admin's first page load after idle is slow," never a whole-forum outage.
+
+**The fix.** This is an immutable image -- we rebuild it per release and never `git pull` -- so the runtime `.git` is dead weight. The build:
+
+1. Writes `config/git-utils-overrides.json` with `git_version` (the real HEAD SHA), `git_branch`, and `full_version`. Discourse core reads this file (`GitUtils.filesystem_overrides`) and uses it *instead of* shelling out for version reporting.
+2. Removes `.git`. With no repository present, `has_commit?`'s `git merge-base` fails instantly (`fatal: not a git repository`, exit 128); `GitUtils` swallows the error and returns `false`. No subprocess pack-read, no freeze.
+
+> **Note:** the overrides file does **not** cover `has_commit?` (it calls git directly), so **removing `.git` is the part that actually kills the freeze** -- the overrides file is what keeps the admin **Version** panel accurate afterwards.
+
+**The `-customized` version suffix.** `full_version` is set to `<release-tag>-customized` (e.g. `v2026.6.0-latest-customized`). The `-customized` marks this as the discourse-k8s build rather than stock upstream Discourse, and it's what you'll see in **Admin → What's new / Version**. (Upstream's own `git describe --dirty` would otherwise always append `-dirty` here, because the build edits a tracked file -- it adds `gem "sigdump"` to the Gemfile -- on every build; a constant `-dirty` is just noise.)
 
 ### Build arguments
 
