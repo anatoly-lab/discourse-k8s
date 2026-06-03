@@ -4,9 +4,9 @@ description: A Helm chart for deploying Discourse forum on Kubernetes with Redis
 type: application
 version: 0.8.0
 appVersion: "v2026.6.0-latest"
-home: https://github.com/anatoly314/discourse-k8s
+home: https://github.com/anatoly-lab/discourse-k8s
 sources:
-  - https://github.com/anatoly314/discourse-k8s
+  - https://github.com/anatoly-lab/discourse-k8s
   - https://www.discourse.org
 maintainers:
   - name: Anatoly

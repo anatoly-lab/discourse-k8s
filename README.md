@@ -73,7 +73,7 @@ Discourse plugins contribute JavaScript and CSS to the compiled asset bundle. Th
 **Option A: Use the pre-built image from GHCR**
 
 ```
-ghcr.io/anatoly314/discourse-k8s:v0.5.0
+ghcr.io/anatoly-lab/discourse-k8s:v0.5.0
 ```
 
 **Option B: Build your own**
@@ -104,7 +104,7 @@ openssl rand -hex 64
 ```yaml
 # my-values.yaml
 image:
-  repository: ghcr.io/anatoly314/discourse-k8s
+  repository: ghcr.io/anatoly-lab/discourse-k8s
   tag: v0.5.0
 
 discourse:
@@ -137,7 +137,7 @@ discourse:
 **From GHCR OCI registry:**
 
 ```bash
-helm install discourse oci://ghcr.io/anatoly314/helm-charts/discourse \
+helm install discourse oci://ghcr.io/anatoly-lab/helm-charts/discourse \
   --version 0.3.0 \
   -f my-values.yaml \
   --namespace discourse \
@@ -379,7 +379,7 @@ Ptrace-free, in-process introspection for capturing where a web request is block
 Specify each parameter using the `--set key=value[,key=value]` argument to `helm install`. For example:
 
 ```bash
-helm install discourse oci://ghcr.io/anatoly314/helm-charts/discourse \
+helm install discourse oci://ghcr.io/anatoly-lab/helm-charts/discourse \
   --set discourse.hostname=forum.example.com \
   --set discourse.database.host=postgres.svc.cluster.local
 ```
@@ -387,7 +387,7 @@ helm install discourse oci://ghcr.io/anatoly314/helm-charts/discourse \
 Alternatively, provide a YAML file with the values using `-f`:
 
 ```bash
-helm install discourse oci://ghcr.io/anatoly314/helm-charts/discourse -f my-values.yaml
+helm install discourse oci://ghcr.io/anatoly-lab/helm-charts/discourse -f my-values.yaml
 ```
 
 ## Plugins and Site Settings
@@ -538,7 +538,7 @@ Both the Docker image and Helm chart are built and published by GitHub Actions, 
 ### Docker image
 
 - **Trigger:** Push a tag matching `docker/v*` (e.g. `docker/v0.3.0`)
-- **Registry:** `ghcr.io/anatoly314/discourse-k8s`
+- **Registry:** `ghcr.io/anatoly-lab/discourse-k8s`
 - **Tags produced:** Version tag + `latest`
 - **Workflow:** [`.github/workflows/docker.yml`](.github/workflows/docker.yml)
 
@@ -552,7 +552,7 @@ Note: The `DISCOURSE_VERSION` (the Discourse release being built) is pinned in t
 ### Helm chart
 
 - **Trigger:** Push a tag matching `chart/v*` (e.g. `chart/v0.2.0`)
-- **Registry:** `oci://ghcr.io/anatoly314/helm-charts`
+- **Registry:** `oci://ghcr.io/anatoly-lab/helm-charts`
 - **Workflow:** [`.github/workflows/helm.yml`](.github/workflows/helm.yml)
 
 ```bash
@@ -564,10 +564,10 @@ git push origin chart/v0.2.0
 
 ```bash
 # Pull and inspect
-helm pull oci://ghcr.io/anatoly314/helm-charts/discourse --version 0.2.0
+helm pull oci://ghcr.io/anatoly-lab/helm-charts/discourse --version 0.2.0
 
 # Install directly
-helm install discourse oci://ghcr.io/anatoly314/helm-charts/discourse \
+helm install discourse oci://ghcr.io/anatoly-lab/helm-charts/discourse \
   --version 0.2.0 -f my-values.yaml -n discourse --create-namespace
 ```
 
@@ -579,7 +579,7 @@ spec:
     - repoURL: https://github.com/anatoly314/<infra-repo>.git
       targetRevision: HEAD
       ref: values
-    - repoURL: ghcr.io/anatoly314/helm-charts
+    - repoURL: ghcr.io/anatoly-lab/helm-charts
       chart: discourse
       targetRevision: 0.2.0
       helm:

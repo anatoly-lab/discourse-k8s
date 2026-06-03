@@ -29,7 +29,7 @@ ARG DISCOURSE_VERSION=v2026.6.0-latest
 LABEL org.opencontainers.image.title="Discourse (AnkiMCP)" \
       org.opencontainers.image.description="Discourse forum with plugins and precompiled assets for Kubernetes" \
       org.opencontainers.image.version="${DISCOURSE_VERSION}" \
-      org.opencontainers.image.source="https://github.com/anatoly314/discourse-k8s" \
+      org.opencontainers.image.source="https://github.com/anatoly-lab/discourse-k8s" \
       org.opencontainers.image.base.name="${BASE_IMAGE}" \
       org.opencontainers.image.licenses="GPL-2.0-only"
 
