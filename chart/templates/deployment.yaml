@@ -233,9 +233,19 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "discourse.configmapName" . }}
-          {{- if include "discourse.hasEnvVars" . }}
+          {{- $rubyopt := include "discourse.webRubyopt" . }}
+          {{- if or (include "discourse.hasEnvVars" .) $rubyopt }}
           env:
             {{- include "discourse.secretEnvVars" . | nindent 12 }}
+            {{- if $rubyopt }}
+            # Diagnostics: in-process introspection loaded via RUBYOPT, gated by
+            # .Values.diagnostics. Web-only (the freeze is on the pitchfork path).
+            # Survives the mold->worker fork: rbtrace re-keys its msgqueue per pid
+            # and sigdump's trap is inherited, so each worker is addressable by its
+            # own pid. See the discourse.webRubyopt helper for the crash caveat.
+            - name: RUBYOPT
+              value: {{ $rubyopt | quote }}
+            {{- end }}
             {{- with .Values.discourse.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

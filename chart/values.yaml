@@ -195,6 +195,42 @@ stylesheetWarmup:
       memory: 3Gi
 
 # ---------------------------------------------------------------------------
+# Diagnostics (ptrace-free, in-process introspection)
+# ---------------------------------------------------------------------------
+# For capturing WHERE a request is blocked when the cluster forbids attaching
+# external tracers (ptrace_scope=2, so no strace / gdb-attach). Both tools load
+# in-process via RUBYOPT on the WEB container only and are OFF by default with
+# zero overhead when off. They survive pitchfork's mold->worker fork: each
+# worker is addressable by its own pid.
+#
+# Flip a toggle, roll the web pods, reproduce the freeze, capture, flip back.
+diagnostics:
+  # rbtrace -- live tracer over a SysV message queue (no ptrace). Ships in
+  # Discourse core's Gemfile, so enabling is harmless. BUT it is BEST-EFFORT:
+  # attaching needs the node's SysV msg-queue limits raised
+  # (kernel.msgmax/kernel.msgmnb). On a stock node (msgmax=8192, msgmnb=16384)
+  # the attach fails ("pid is not listening"), and rbtrace 0.5.3 is fragile on
+  # Ruby 3.4. Prefer sigdump below; keep this only if you can tune the node.
+  # Capture during a freeze (run INSIDE the web container; pid from `pgrep -af pitchfork`):
+  #   kubectl exec -it <pod> -c web -- bundle exec rbtrace -p <pid> --backtraces
+  #   # or slow-method watch:  bundle exec rbtrace -p <pid> --slow=1000
+  #   # or eval a thread dump:  bundle exec rbtrace -p <pid> -e 'Thread.list.map(&:backtrace)'
+  rbtrace:
+    enabled: false
+  # sigdump -- on a signal, dumps every thread's Ruby backtrace to a file.
+  # RECOMMENDED primary tool: pure signal + file write, no SysV IPC and no node
+  # tuning required (unlike rbtrace), so it works on a stock cluster.
+  # NOTE: requires the image to be built with the sigdump gem (docker/Dockerfile
+  # adds it to the bundle). Enabling this on an image WITHOUT sigdump crashes
+  # Ruby at boot -> CrashLoopBackOff. Default trap signal is SIGCONT (does not
+  # collide with pitchfork's INT/QUIT/TERM/USR1/USR2/TTIN/TTOU/WINCH/HUP).
+  # Capture during a freeze (pid from `pgrep -af pitchfork`):
+  #   kubectl exec <pod> -c web -- kill -CONT <pid>      # or: pkill -CONT -f pitchfork
+  #   kubectl exec <pod> -c web -- sh -c 'cat /tmp/sigdump-*.log'   # one file per pid
+  sigdump:
+    enabled: false
+
+# ---------------------------------------------------------------------------
 # Persistent storage
 # ---------------------------------------------------------------------------
 # Mount paths use standard Discourse layout under /var/www/discourse.

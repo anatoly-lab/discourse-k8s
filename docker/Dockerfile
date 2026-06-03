@@ -58,6 +58,34 @@ RUN sudo -u discourse git fetch --depth 1 origin tag "${DISCOURSE_VERSION}" && \
     sudo -u discourse git checkout "${DISCOURSE_VERSION}"
 
 # =============================================================================
+# Diagnostics gem: sigdump
+# =============================================================================
+# Adds sigdump to the bundle for ptrace-free thread-backtrace dumps (the cluster
+# runs ptrace_scope=2, so external tracers can't attach). rbtrace is already in
+# Discourse core's Gemfile; sigdump is not, so we add it here.
+#
+# Must run BEFORE the frozen/deployment `bundle install` below: that install is
+# `--deployment` (frozen), which refuses if Gemfile.lock is out of sync with the
+# Gemfile. `bundle add` edits BOTH the Gemfile and Gemfile.lock conservatively
+# (sigdump is a single-file gem with no runtime deps, so nothing else is bumped)
+# and `--skip-install` defers the actual install to the step below.
+#
+# require=false: not auto-loaded, so the gem is inert at runtime until something
+# opts in. The Helm `diagnostics.sigdump.enabled` toggle is what opts in, via
+# RUBYOPT="-r sigdump/setup" on the web container. Because sigdump lands in the
+# DEFAULT group (no --group flag), it is NOT skipped by `--without test
+# development` and is resolvable under `bundle exec` at runtime.
+#
+# Discourse is re-checked-out fresh on every build, so this edit is reapplied
+# each build (it is not persisted upstream).
+#
+# BUNDLE_FROZEN=false: the base image ships .bundle/config with deployment=true
+# (which implies frozen), and frozen mode refuses any Gemfile mutation. We force
+# frozen off for THIS command only so `bundle add` can write the Gemfile/lock;
+# the deployment/frozen install below is unaffected.
+RUN sudo -u discourse env BUNDLE_FROZEN=false bundle add sigdump --require=false --skip-install
+
+# =============================================================================
 # Install Ruby gems
 # =============================================================================
 # Mirrors the web-only stage from discourse/discourse_docker.

@@ -300,6 +300,15 @@ Per-IP request budgets enforced by Discourse's `request_tracker` Rack middleware
 | `stylesheetWarmup.resources.requests.cpu` | warm-css init container CPU request | `500m` |
 | `stylesheetWarmup.resources.limits.memory` | warm-css init container memory limit (sized for OOM headroom; effectively free since init resources count as max, not sum) | `3Gi` |
 
+### Diagnostics parameters
+
+Ptrace-free, in-process introspection for capturing where a web request is blocked when external tracers can't attach (the cluster runs `ptrace_scope=2`). Both load via `RUBYOPT` on the **web container only**, are OFF by default, and add zero overhead when off. See [Diagnosing a request freeze](#diagnosing-a-request-freeze) for capture commands.
+
+| Name | Description | Value |
+| ---- | ----------- | ----- |
+| `diagnostics.rbtrace.enabled` | Load `rbtrace` (`RUBYOPT=-r rbtrace`) for live method/backtrace tracing over a SysV message queue. Ships in Discourse core. **Best-effort:** attaching needs the node's `kernel.msgmax`/`kernel.msgmnb` raised; on a stock node the attach fails. Prefer sigdump. | `false` |
+| `diagnostics.sigdump.enabled` | Load `sigdump` (`RUBYOPT=-r sigdump/setup`) to dump every thread's Ruby backtrace to a file on a signal (default `SIGCONT`). **Requires the image to be built with the `sigdump` gem** (see [Building the Custom Image](#building-the-custom-image)); enabling it on an image without sigdump crashes Ruby at boot (CrashLoopBackOff). | `false` |
+
 ### Persistence parameters
 
 | Name | Description | Value |
@@ -442,7 +451,7 @@ The [`docker/Dockerfile`](docker/Dockerfile) builds a production-ready Discourse
 
 1. **Starts from `discourse/base:slim`** -- Official Discourse base image with Ruby, Node, pnpm, ImageMagick, and PostgreSQL client. No bundled database or Redis.
 2. **Pins the Discourse release** -- Checks out the exact release tag (e.g. `v2026.3.0-latest`) from the Discourse repo already cloned in the base image.
-3. **Installs Ruby gems** -- `bundle install --deployment` with exact Gemfile.lock versions.
+3. **Installs Ruby gems** -- adds the `sigdump` diagnostics gem to the bundle (`bundle add sigdump --require=false`, so it's inert until `diagnostics.sigdump.enabled` opts in via `RUBYOPT`), then `bundle install --deployment` with exact Gemfile.lock versions. `rbtrace` is already in Discourse core's Gemfile.
 4. **Installs JavaScript dependencies** -- `pnpm install --frozen-lockfile` (or yarn, for forward compat).
 5. **Precompiles assets** -- `bundle exec rake assets:precompile` with `SKIP_DB_AND_REDIS=1` so no live database is needed during the build.
 
@@ -633,6 +642,55 @@ kubectl logs deploy/discourse -c sidekiq -n discourse
 ```
 
 The chart passes all four Discourse queues (`critical`, `default`, `low`, `ultra_low`) explicitly. Without these flags, standalone Sidekiq only processes the `default` queue.
+
+### Diagnosing a request freeze
+
+When a web request hangs with zero CPU (a worker parked in a blocking syscall) and you need the Ruby `file:line` where it's stuck, use the diagnostics toggles. External tracers (`strace`, `gdb --pid`) don't work here because the cluster runs `ptrace_scope=2` — both tools below are in-process and ptrace-free. They are scoped to the **web container** and survive pitchfork's mold→worker fork (each worker is addressable by its own pid).
+
+> **Start with sigdump.** It works on a stock cluster (pure signal + file dump). rbtrace is best-effort here: its SysV message queue won't attach unless the node's `kernel.msgmax`/`kernel.msgmnb` are raised (verified failing on a stock node with `msgmax=8192`/`msgmnb=16384`), and rbtrace 0.5.3 is fragile on Ruby 3.4.
+
+Enable one (or both). With `strategy: Recreate` and a single replica, the `helm upgrade` itself rolls the pod, so the new `RUBYOPT` takes effect once the new pod is `Ready`:
+
+```bash
+helm upgrade discourse oci://ghcr.io/<owner>/charts/discourse \
+  -n discourse --reuse-values \
+  --set diagnostics.rbtrace.enabled=true \
+  --set diagnostics.sigdump.enabled=true
+kubectl rollout status deploy/discourse -n discourse
+```
+
+List the pitchfork processes — a mold plus N workers — and pick the pid(s) to inspect (you often won't know which worker holds the stuck request, so be ready to check several):
+
+```bash
+POD=$(kubectl get pod -n discourse -l app.kubernetes.io/name=discourse -o name | head -1)
+kubectl exec -n discourse "$POD" -c web -- pgrep -af pitchfork
+```
+
+**sigdump** (recommended — works on a stock cluster). Send the default signal (`SIGCONT`, which pitchfork does not handle, so it's safe) to a worker; it dumps to `/tmp/sigdump-<pid>.log` inside the container. Signalling every pitchfork pid at once is also fine (each writes its own file):
+
+```bash
+# Signal one worker, or all of them, then read the dumps:
+kubectl exec -n discourse "$POD" -c web -- kill -CONT <WORKER_PID>
+kubectl exec -n discourse "$POD" -c web -- pkill -CONT -f pitchfork   # all at once (alternative)
+kubectl exec -n discourse "$POD" -c web -- sh -c 'tail -n +1 /tmp/sigdump-*.log'
+```
+
+**rbtrace** (best-effort — needs node-level SysV tuning, see the note below; run inside the web container via `bundle exec` so the gem resolves). Pass a concrete pid from the list above:
+
+```bash
+# Backtraces for every thread of a worker (best signal for a freeze):
+kubectl exec -it -n discourse "$POD" -c web -- bundle exec rbtrace -p <WORKER_PID> --backtraces
+
+# Watch for any method call slower than 1000ms while you reproduce the freeze:
+kubectl exec -it -n discourse "$POD" -c web -- bundle exec rbtrace -p <WORKER_PID> --slow=1000
+
+# Evaluate an arbitrary expression in the target (e.g. raw thread backtraces):
+kubectl exec -it -n discourse "$POD" -c web -- bundle exec rbtrace -p <WORKER_PID> -e 'Thread.list.map(&:backtrace)'
+```
+
+> rbtrace uses a SysV message queue (`msgget`), not ptrace. It needs the node's `kernel.msgmax`/`kernel.msgmnb` raised to attach — on a stock node (`msgmax=8192`, `msgmnb=16384`) the attach fails with *"pid is not listening for messages"* even though the gem is loaded. These are namespaced ("unsafe") sysctls, so allowing them needs kubelet `--allowed-unsafe-sysctls=kernel.msg*` plus a pod `securityContext.sysctls` entry. If you can't tune the node, use sigdump.
+
+Turn the toggles back off (and let the pod roll) once you've captured what you need.
 
 ## References
 

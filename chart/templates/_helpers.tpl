@@ -169,6 +169,33 @@ can be conditionally rendered.
 {{- end }}
 
 {{/*
+RUBYOPT value for the WEB container, composed from the diagnostics toggles.
+Loads in-process introspection libraries with no external tracer (the cluster
+has ptrace_scope=2, so strace/gdb-attach are unavailable).
+
+  diagnostics.rbtrace.enabled -> -r rbtrace        (msgqueue-based live tracer)
+  diagnostics.sigdump.enabled -> -r sigdump/setup  (signal-based thread dumper)
+
+Returns an empty string when both are off, so the caller can skip emitting an
+empty RUBYOPT (an empty -r list is harmless, but we never set a useless env var).
+
+WARNING: -r sigdump/setup will crash Ruby at boot (CrashLoopBackOff) if the
+sigdump gem is NOT in the image bundle. The sigdump toggle therefore assumes the
+image was built with `gem "sigdump"` added to the Discourse Gemfile (see
+docker/Dockerfile). rbtrace is always present (Discourse core Gemfile).
+*/}}
+{{- define "discourse.webRubyopt" -}}
+{{- $opts := list -}}
+{{- if .Values.diagnostics.rbtrace.enabled -}}
+  {{- $opts = append $opts "-r rbtrace" -}}
+{{- end -}}
+{{- if .Values.diagnostics.sigdump.enabled -}}
+  {{- $opts = append $opts "-r sigdump/setup" -}}
+{{- end -}}
+{{- join " " $opts -}}
+{{- end }}
+
+{{/*
 Sidekiq command with configurable concurrency and all Discourse queues.
 Discourse uses 4 weighted queues: critical (8), default (4), low (2), ultra_low (1).
 Without explicit -q flags, standalone Sidekiq only processes "default".
