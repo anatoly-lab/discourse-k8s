@@ -116,8 +116,20 @@ RUN sudo -u discourse tee config/initializers/discourse_k8s_diagnostics.rb > /de
 # sigdump: SIGCONT dumps every thread's backtrace to /tmp/sigdump-<pid>.log.
 # rbtrace: installs the rbtrace listener (best-effort; attaching also needs the
 #          node's kernel.msgmax/msgmnb raised).
-require "rbtrace" if ENV["DISCOURSE_DIAG_RBTRACE"] == "1"
-require "sigdump/setup" if ENV["DISCOURSE_DIAG_SIGDUMP"] == "1"
+#
+# Fail-safe: a diagnostics gem must NEVER crash the pod. Wrap the require so any
+# load failure (LoadError or any other error) degrades to a log line with the
+# exact cause and boot continues without the tool -- instead of a CrashLoop.
+# This also surfaces the reason for any environment-specific load failure.
+def k8s_diag_require(lib)
+  require lib
+rescue ScriptError, StandardError => e
+  warn "[discourse-k8s diagnostics] could not load #{lib.inspect}: " \
+       "#{e.class}: #{e.message} (continuing without it)"
+end
+
+k8s_diag_require("rbtrace") if ENV["DISCOURSE_DIAG_RBTRACE"] == "1"
+k8s_diag_require("sigdump/setup") if ENV["DISCOURSE_DIAG_SIGDUMP"] == "1"
 INITIALIZER
 
 # =============================================================================
