@@ -62,40 +62,40 @@ RUN sudo -u discourse git fetch --depth 1 origin tag "${DISCOURSE_VERSION}" && \
 # =============================================================================
 # Adds sigdump to the bundle for ptrace-free thread-backtrace dumps (the cluster
 # runs ptrace_scope=2, so external tracers can't attach). rbtrace is already in
-# Discourse core's Gemfile; sigdump is not, so we add it here.
+# Discourse core's Gemfile; sigdump is not, so we append it here.
 #
-# Must run BEFORE the frozen/deployment `bundle install` below: that install is
-# `--deployment` (frozen), which refuses if Gemfile.lock is out of sync with the
-# Gemfile. `bundle add` edits BOTH the Gemfile and Gemfile.lock conservatively
-# (sigdump is a single-file gem with no runtime deps, so nothing else is bumped)
-# and `--skip-install` defers the actual install to the step below.
+# require=false: not auto-loaded, so the gem stays inert until the Helm
+# `diagnostics.sigdump.enabled` toggle opts in via RUBYOPT="-r sigdump/setup" on
+# the web container. It lands in the DEFAULT group, so `--without test
+# development` does not skip it and it resolves under `bundle exec` at runtime.
 #
-# require=false: not auto-loaded, so the gem is inert at runtime until something
-# opts in. The Helm `diagnostics.sigdump.enabled` toggle is what opts in, via
-# RUBYOPT="-r sigdump/setup" on the web container. Because sigdump lands in the
-# DEFAULT group (no --group flag), it is NOT skipped by `--without test
-# development` and is resolvable under `bundle exec` at runtime.
+# We append the gem line directly (not `bundle add`) and let the NON-frozen
+# install below fold it into Gemfile.lock. `bundle add --skip-install` followed
+# by a frozen install leaves the Gemfile/lock inconsistent under Bundler 4
+# (boot-time ProductionError: "dependencies were deleted from your gemfile").
 #
 # Discourse is re-checked-out fresh on every build, so this edit is reapplied
 # each build (it is not persisted upstream).
-#
-# BUNDLE_FROZEN=false: the base image ships .bundle/config with deployment=true
-# (which implies frozen), and frozen mode refuses any Gemfile mutation. We force
-# frozen off for THIS command only so `bundle add` can write the Gemfile/lock;
-# the deployment/frozen install below is unaffected.
-RUN sudo -u discourse env BUNDLE_FROZEN=false bundle add sigdump --require=false --skip-install
+RUN printf '\n# Diagnostics: ptrace-free thread dumps (Helm diagnostics.sigdump.enabled)\ngem "sigdump", require: false\n' \
+    | sudo -u discourse tee -a Gemfile > /dev/null
 
 # =============================================================================
 # Install Ruby gems
 # =============================================================================
 # Mirrors the web-only stage from discourse/discourse_docker.
-# --deployment: uses exact Gemfile.lock versions, installs to vendor/bundle.
-# --without test development: skip test/dev-only gems.
+# path ./vendor/bundle, --without test development as upstream.
+#
+# The install runs in NON-frozen mode so it can fold the appended sigdump gem
+# into Gemfile.lock (only sigdump is added; every other gem stays at its locked
+# version). We then set deployment=true so the runtime bundle is frozen and
+# reproducible. The env vars override any frozen/deployment from the base
+# image's .bundle/config for this one command only.
 # =============================================================================
-RUN sudo -u discourse bundle config --local deployment true && \
-    sudo -u discourse bundle config --local path ./vendor/bundle && \
+RUN sudo -u discourse bundle config --local path ./vendor/bundle && \
     sudo -u discourse bundle config --local without "test development" && \
-    sudo -u discourse bundle install --jobs "$(( $(nproc) - 1 ))" && \
+    sudo -u discourse env BUNDLE_FROZEN=false BUNDLE_DEPLOYMENT=false \
+        bundle install --jobs "$(( $(nproc) - 1 ))" && \
+    sudo -u discourse bundle config --local deployment true && \
     find vendor/bundle -name cache -not -path '*/gems/*' -type d -exec rm -rf {} + 2>/dev/null; \
     find vendor/bundle -name tmp -type d -exec rm -rf {} + 2>/dev/null; \
     true
