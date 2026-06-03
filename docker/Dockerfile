@@ -64,10 +64,10 @@ RUN sudo -u discourse git fetch --depth 1 origin tag "${DISCOURSE_VERSION}" && \
 # runs ptrace_scope=2, so external tracers can't attach). rbtrace is already in
 # Discourse core's Gemfile; sigdump is not, so we append it here.
 #
-# require=false: not auto-loaded, so the gem stays inert until the Helm
-# `diagnostics.sigdump.enabled` toggle opts in via RUBYOPT="-r sigdump/setup" on
-# the web container. It lands in the DEFAULT group, so `--without test
-# development` does not skip it and it resolves under `bundle exec` at runtime.
+# require=false: not auto-loaded, so the gem stays inert until the diagnostics
+# initializer below requires it (gated by the Helm `diagnostics.sigdump.enabled`
+# toggle). It lands in the DEFAULT group, so `--without test development` does
+# not skip it and it resolves under `bundle exec` at runtime.
 #
 # We append the gem line directly (not `bundle add`) and let the NON-frozen
 # install below fold it into Gemfile.lock. `bundle add --skip-install` followed
@@ -78,6 +78,39 @@ RUN sudo -u discourse git fetch --depth 1 origin tag "${DISCOURSE_VERSION}" && \
 # each build (it is not persisted upstream).
 RUN printf '\n# Diagnostics: ptrace-free thread dumps (Helm diagnostics.sigdump.enabled)\ngem "sigdump", require: false\n' \
     | sudo -u discourse tee -a Gemfile > /dev/null
+
+# =============================================================================
+# Diagnostics initializer: env-var-gated, in-process gem loading
+# =============================================================================
+# We load the diagnostics gems (rbtrace, sigdump) from a Rails initializer
+# instead of via RUBYOPT. RUBYOPT preloads run at Ruby interpreter startup,
+# BEFORE Bundler puts the path-installed bundle (vendor/bundle) on the load
+# path, so `-r sigdump/setup` / `-r rbtrace` there fails with LoadError and
+# crashes the worker at boot. An initializer runs AFTER Bundler.setup, in the
+# fully-booted app where the bundle IS on the load path, so a plain `require`
+# resolves. The Helm chart's diagnostics toggles set the matching env vars
+# (DISCOURSE_DIAG_RBTRACE / DISCOURSE_DIAG_SIGDUMP) on the web container.
+#
+# Discourse autoloads config/initializers/*.rb at boot. Written as the
+# discourse user (the checkout is owned by discourse).
+# =============================================================================
+RUN sudo -u discourse tee config/initializers/discourse_k8s_diagnostics.rb > /dev/null <<'INITIALIZER'
+# frozen_string_literal: true
+#
+# Added by the discourse-k8s image. Loads in-process, ptrace-free diagnostics
+# tools when the Helm chart's diagnostics toggles set the matching env var on
+# the web container. We require here -- in a Rails initializer, AFTER Bundler
+# has set up the bundle -- instead of via RUBYOPT, because RUBYOPT preloads run
+# at Ruby interpreter startup, before Bundler puts the bundled gems on the load
+# path; `-r sigdump/setup` / `-r rbtrace` there fails with LoadError and crashes
+# the worker at boot.
+#
+# sigdump: SIGCONT dumps every thread's backtrace to /tmp/sigdump-<pid>.log.
+# rbtrace: installs the rbtrace listener (best-effort; attaching also needs the
+#          node's kernel.msgmax/msgmnb raised).
+require "rbtrace" if ENV["DISCOURSE_DIAG_RBTRACE"] == "1"
+require "sigdump/setup" if ENV["DISCOURSE_DIAG_SIGDUMP"] == "1"
+INITIALIZER
 
 # =============================================================================
 # Install Ruby gems

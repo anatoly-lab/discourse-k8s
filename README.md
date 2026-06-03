@@ -302,12 +302,12 @@ Per-IP request budgets enforced by Discourse's `request_tracker` Rack middleware
 
 ### Diagnostics parameters
 
-Ptrace-free, in-process introspection for capturing where a web request is blocked when external tracers can't attach (the cluster runs `ptrace_scope=2`). Both load via `RUBYOPT` on the **web container only**, are OFF by default, and add zero overhead when off. See [Diagnosing a request freeze](#diagnosing-a-request-freeze) for capture commands.
+Ptrace-free, in-process introspection for capturing where a web request is blocked when external tracers can't attach (the cluster runs `ptrace_scope=2`). Both are scoped to the **web container only**, are OFF by default, and add zero overhead when off. Each toggle sets an env var (`DISCOURSE_DIAG_RBTRACE` / `DISCOURSE_DIAG_SIGDUMP`) that a Rails initializer baked into the image reads and `require`s the gem from — *after* Bundler has set up the bundle, so the bundled gem actually loads. (We can't use `RUBYOPT`: its preloads run at interpreter startup, before Bundler puts the bundle on the load path, so a bundled gem isn't loadable and the pod crashes at boot.) **Requires image tag `v0.10.0` or newer** (the one that ships the initializer); on an older image the toggle is simply inert. See [Diagnosing a request freeze](#diagnosing-a-request-freeze) for capture commands.
 
 | Name | Description | Value |
 | ---- | ----------- | ----- |
-| `diagnostics.rbtrace.enabled` | Load `rbtrace` (`RUBYOPT=-r rbtrace`) for live method/backtrace tracing over a SysV message queue. Ships in Discourse core. **Best-effort:** attaching needs the node's `kernel.msgmax`/`kernel.msgmnb` raised; on a stock node the attach fails. Prefer sigdump. | `false` |
-| `diagnostics.sigdump.enabled` | Load `sigdump` (`RUBYOPT=-r sigdump/setup`) to dump every thread's Ruby backtrace to a file on a signal (default `SIGCONT`). **Requires the image to be built with the `sigdump` gem** (see [Building the Custom Image](#building-the-custom-image)); enabling it on an image without sigdump crashes Ruby at boot (CrashLoopBackOff). | `false` |
+| `diagnostics.rbtrace.enabled` | Sets `DISCOURSE_DIAG_RBTRACE=1`, so the image initializer `require`s `rbtrace` for live method/backtrace tracing over a SysV message queue. Ships in Discourse core. **Best-effort:** attaching needs the node's `kernel.msgmax`/`kernel.msgmnb` raised; on a stock node the attach fails. Prefer sigdump. | `false` |
+| `diagnostics.sigdump.enabled` | Sets `DISCOURSE_DIAG_SIGDUMP=1`, so the image initializer `require`s `sigdump/setup` to dump every thread's Ruby backtrace to a file on a signal (default `SIGCONT`). The `sigdump` gem is in the image bundle (see [Building the Custom Image](#building-the-custom-image)). Requires image tag `v0.10.0`+; inert on older images. | `false` |
 
 ### Persistence parameters
 
@@ -451,7 +451,7 @@ The [`docker/Dockerfile`](docker/Dockerfile) builds a production-ready Discourse
 
 1. **Starts from `discourse/base:slim`** -- Official Discourse base image with Ruby, Node, pnpm, ImageMagick, and PostgreSQL client. No bundled database or Redis.
 2. **Pins the Discourse release** -- Checks out the exact release tag (e.g. `v2026.3.0-latest`) from the Discourse repo already cloned in the base image.
-3. **Installs Ruby gems** -- adds the `sigdump` diagnostics gem to the bundle (`bundle add sigdump --require=false`, so it's inert until `diagnostics.sigdump.enabled` opts in via `RUBYOPT`), then `bundle install --deployment` with exact Gemfile.lock versions. `rbtrace` is already in Discourse core's Gemfile.
+3. **Installs Ruby gems** -- adds the `sigdump` diagnostics gem to the bundle (`require: false`, so it stays inert until `diagnostics.sigdump.enabled` opts in), then `bundle install --deployment` with exact Gemfile.lock versions. `rbtrace` is already in Discourse core's Gemfile. Also drops a Rails initializer (`config/initializers/discourse_k8s_diagnostics.rb`) that `require`s these gems when the chart's diagnostics env vars are set -- loaded in-app *after* Bundler.setup (a bundled gem can't be loaded via `RUBYOPT`, which preloads before the bundle is on the load path).
 4. **Installs JavaScript dependencies** -- `pnpm install --frozen-lockfile` (or yarn, for forward compat).
 5. **Precompiles assets** -- `bundle exec rake assets:precompile` with `SKIP_DB_AND_REDIS=1` so no live database is needed during the build.
 
@@ -647,9 +647,11 @@ The chart passes all four Discourse queues (`critical`, `default`, `low`, `ultra
 
 When a web request hangs with zero CPU (a worker parked in a blocking syscall) and you need the Ruby `file:line` where it's stuck, use the diagnostics toggles. External tracers (`strace`, `gdb --pid`) don't work here because the cluster runs `ptrace_scope=2` — both tools below are in-process and ptrace-free. They are scoped to the **web container** and survive pitchfork's mold→worker fork (each worker is addressable by its own pid).
 
+Each toggle sets an env var (`DISCOURSE_DIAG_RBTRACE` / `DISCOURSE_DIAG_SIGDUMP`) that a Rails initializer baked into the image reads and `require`s the gem from. The initializer runs *after* Bundler has set up the bundle, so the bundled gem loads. (Loading via `RUBYOPT` does not work: its preloads run at Ruby interpreter startup, before Bundler puts the bundle on the load path, so a bundled gem isn't loadable and the worker crashes at boot.) This needs **image tag `v0.10.0` or newer**; on an older image the toggle is inert.
+
 > **Start with sigdump.** It works on a stock cluster (pure signal + file dump). rbtrace is best-effort here: its SysV message queue won't attach unless the node's `kernel.msgmax`/`kernel.msgmnb` are raised (verified failing on a stock node with `msgmax=8192`/`msgmnb=16384`), and rbtrace 0.5.3 is fragile on Ruby 3.4.
 
-Enable one (or both). With `strategy: Recreate` and a single replica, the `helm upgrade` itself rolls the pod, so the new `RUBYOPT` takes effect once the new pod is `Ready`:
+Enable one (or both). With `strategy: Recreate` and a single replica, the `helm upgrade` itself rolls the pod, so the new env var takes effect once the new pod is `Ready`:
 
 ```bash
 helm upgrade discourse oci://ghcr.io/<owner>/charts/discourse \

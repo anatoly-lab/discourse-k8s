@@ -199,14 +199,25 @@ stylesheetWarmup:
 # ---------------------------------------------------------------------------
 # For capturing WHERE a request is blocked when the cluster forbids attaching
 # external tracers (ptrace_scope=2, so no strace / gdb-attach). Both tools load
-# in-process via RUBYOPT on the WEB container only and are OFF by default with
-# zero overhead when off. They survive pitchfork's mold->worker fork: each
-# worker is addressable by its own pid.
+# in-process on the WEB container only and are OFF by default with zero overhead
+# when off. They survive pitchfork's mold->worker fork: each worker is
+# addressable by its own pid.
+#
+# Mechanism: each toggle sets an env var (DISCOURSE_DIAG_RBTRACE /
+# DISCOURSE_DIAG_SIGDUMP) on the web container. A Rails initializer baked into
+# the image (config/initializers/discourse_k8s_diagnostics.rb) reads it and
+# `require`s the gem -- AFTER Bundler.setup, so the bundled gem resolves. (We do
+# NOT use RUBYOPT: its preloads run before Bundler puts the bundle on the load
+# path, so a bundled gem isn't loadable and the worker crashes at boot.)
+#
+# REQUIRES an image built with that initializer (image tag >= v0.10.0). On an
+# OLDER image the toggle is simply inert -- the env var is read by an initializer
+# the older image doesn't have, so nothing loads and nothing crashes.
 #
 # Flip a toggle, roll the web pods, reproduce the freeze, capture, flip back.
 diagnostics:
   # rbtrace -- live tracer over a SysV message queue (no ptrace). Ships in
-  # Discourse core's Gemfile, so enabling is harmless. BUT it is BEST-EFFORT:
+  # Discourse core's Gemfile, so loading is harmless. BUT it is BEST-EFFORT:
   # attaching needs the node's SysV msg-queue limits raised
   # (kernel.msgmax/kernel.msgmnb). On a stock node (msgmax=8192, msgmnb=16384)
   # the attach fails ("pid is not listening"), and rbtrace 0.5.3 is fragile on
@@ -220,10 +231,10 @@ diagnostics:
   # sigdump -- on a signal, dumps every thread's Ruby backtrace to a file.
   # RECOMMENDED primary tool: pure signal + file write, no SysV IPC and no node
   # tuning required (unlike rbtrace), so it works on a stock cluster.
-  # NOTE: requires the image to be built with the sigdump gem (docker/Dockerfile
-  # adds it to the bundle). Enabling this on an image WITHOUT sigdump crashes
-  # Ruby at boot -> CrashLoopBackOff. Default trap signal is SIGCONT (does not
-  # collide with pitchfork's INT/QUIT/TERM/USR1/USR2/TTIN/TTOU/WINCH/HUP).
+  # The sigdump gem is in the image bundle (docker/Dockerfile adds it); the
+  # initializer requires it only when this toggle is on. Default trap signal is
+  # SIGCONT (does not collide with pitchfork's
+  # INT/QUIT/TERM/USR1/USR2/TTIN/TTOU/WINCH/HUP).
   # Capture during a freeze (pid from `pgrep -af pitchfork`):
   #   kubectl exec <pod> -c web -- kill -CONT <pid>      # or: pkill -CONT -f pitchfork
   #   kubectl exec <pod> -c web -- sh -c 'cat /tmp/sigdump-*.log'   # one file per pid
