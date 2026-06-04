@@ -237,6 +237,18 @@ stylesheetWarmup:
       memory: 3Gi
 
 # ---------------------------------------------------------------------------
+# S3/R2 asset upload
+# ---------------------------------------------------------------------------
+# Uploads Discourse's precompiled assets (incl. brotli/gzip variants) to the
+# S3/R2 bucket on pod start, via `rake s3:upload_assets`. REQUIRED before
+# enabling s3_cdn_url (DISCOURSE_S3_CDN_URL) — otherwise Discourse serves its
+# own assets/br/*.js from the CDN and they 404. Runs every pod start but skips
+# objects already in the bucket (digest compare), so it's a cheap list-and-skip
+# after the first run. No effect unless S3 uploads are configured. Opt-in.
+s3AssetUpload:
+  enabled: false
+
+# ---------------------------------------------------------------------------
 # Diagnostics (ptrace-free, in-process introspection)
 # ---------------------------------------------------------------------------
 # For capturing WHERE a request is blocked when the cluster forbids attaching
