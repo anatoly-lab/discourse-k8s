@@ -131,6 +131,28 @@ true
 {{- end }}
 
 {{/*
+OIDC inline client secret: should the chart-managed Secret hold the client secret?
+True when OIDC is on, NO existingSecret is supplied, and an inline clientSecret is set.
+Mirrors discourse.s3.useInlineKeys.
+*/}}
+{{- define "discourse.oidc.useInlineSecret" -}}
+{{- if and .Values.discourse.oidc.enabled (not .Values.discourse.oidc.existingSecret) .Values.discourse.oidc.clientSecret -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+OIDC secret env: should the containers reference the OIDC client secret via secretKeyRef?
+True when OIDC is on and the secret comes from either an existingSecret or the
+chart-managed Secret (inline clientSecret). Mirrors discourse.s3.useSecretKeys.
+*/}}
+{{- define "discourse.oidc.useSecret" -}}
+{{- if and .Values.discourse.oidc.enabled (or .Values.discourse.oidc.existingSecret (include "discourse.oidc.useInlineSecret" .)) -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
 Determine if the chart-managed Secret should be created.
 True when at least one inline password is provided and no existingSecret
 is set for that credential.
@@ -150,6 +172,9 @@ is set for that credential.
   {{- $create = true -}}
 {{- end -}}
 {{- if include "discourse.s3.useInlineKeys" . -}}
+  {{- $create = true -}}
+{{- end -}}
+{{- if include "discourse.oidc.useInlineSecret" . -}}
   {{- $create = true -}}
 {{- end -}}
 {{- if $create -}}
@@ -173,6 +198,9 @@ Used to conditionally render the env: key in container specs.
   {{- $has = true -}}
 {{- end -}}
 {{- if include "discourse.s3.useSecretKeys" . -}}
+  {{- $has = true -}}
+{{- end -}}
+{{- if include "discourse.oidc.useSecret" . -}}
   {{- $has = true -}}
 {{- end -}}
 {{- if .Values.discourse.extraEnv -}}
@@ -222,6 +250,13 @@ can be conditionally rendered.
     secretKeyRef:
       name: {{ default (include "discourse.secretName" .) .Values.discourse.s3.existingSecret }}
       key: {{ .Values.discourse.s3.secretKeys.secretAccessKey }}
+{{- end }}
+{{- if include "discourse.oidc.useSecret" . }}
+- name: DISCOURSE_OPENID_CONNECT_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ default (include "discourse.secretName" .) .Values.discourse.oidc.existingSecret }}
+      key: {{ .Values.discourse.oidc.secretKeys.clientSecret }}
 {{- end }}
 {{- end }}
 

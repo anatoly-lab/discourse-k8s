@@ -152,6 +152,40 @@ discourse:
       # or a dedicated bucket. Required when backups.enabled=true.
       bucket: ""
 
+  # -- OpenID Connect / SSO (optional) --
+  # First-class config for the discourse-openid-connect plugin (Keycloak, Auth0,
+  # any OIDC provider). When oidc.enabled=false NO OIDC env vars are emitted, so
+  # existing installs render byte-identically. Non-secret values land in the
+  # ConfigMap; the client secret is wired via the secret machinery (mirroring
+  # discourse.s3): supply an existingSecret + secretKeys.clientSecret (preferred
+  # for GitOps) or an inline clientSecret (chart creates a managed Secret).
+  # Do NOT set the same DISCOURSE_OPENID_CONNECT_* var via BOTH discourse.oidc
+  # and discourse.extraEnv -- the result is last-wins/undefined.
+  oidc:
+    enabled: false                          # master toggle; when false NO OIDC env vars are emitted
+    discoveryDocument: ""                   # OIDC discovery URL (.well-known/openid-configuration)
+    clientId: ""
+    authorizeScope: "openid email profile"
+    usePkce: true
+    overridesEmail: false
+    rpInitiatedLogout: false
+    rpInitiatedLogoutRedirect: ""           # OPTIONAL: blank => env var omitted (plugin omits post_logout_redirect_uri)
+    # Client secret -- supply ONE of:
+    #   existingSecret + secretKeys.clientSecret  (reference an existing K8s Secret; preferred for GitOps)
+    #   clientSecret                               (inline; chart creates a managed Secret -- discouraged)
+    clientSecret: ""
+    existingSecret: ""
+    secretKeys:
+      clientSecret: oidc-client-secret
+
+  # -- SSRF-bypass allowlist (optional) --
+  # Hosts Discourse may reach despite its SSRF guard. Use for an internal IdP
+  # (e.g. a cluster-internal Keycloak) that lives on a private address Discourse
+  # would otherwise refuse to fetch. Discourse splits this list on the PIPE "|"
+  # (NOT commas), e.g. "a.internal|b.internal". NOT OIDC-specific; emitted as
+  # DISCOURSE_ALLOWED_INTERNAL_HOSTS only when non-empty.
+  allowedInternalHosts: ""
+
   # -- Serving --
   # Serve static assets directly from Unicorn (no nginx in front)
   serveStaticAssets: true
@@ -166,19 +200,17 @@ discourse:
 
   # -- Extra environment variables --
   # Passed directly to all Discourse containers (unicorn, sidekiq, migrate).
-  # Use for any env vars not covered above (e.g. plugin toggles, OIDC config).
+  # Use for env vars not covered by the first-class blocks above (e.g. plugin
+  # toggles like DISCOURSE_CHAT_ENABLED).
+  # For OIDC/SSO use the discourse.oidc.* block above, NOT extraEnv -- and do not
+  # set the same DISCOURSE_OPENID_CONNECT_* var via both (last-wins/undefined).
   # Do NOT set the global DISCOURSE_S3_BUCKET here: it flips use_s3? true and
   # welds the compiled assets onto S3, which this chart deliberately avoids --
   # use the discourse.s3.* values for uploads-only S3/R2 instead.
   # Example:
   #   extraEnv:
-  #     - name: DISCOURSE_OPENID_CONNECT_ENABLED
+  #     - name: DISCOURSE_CHAT_ENABLED
   #       value: "true"
-  #     - name: DISCOURSE_OPENID_CONNECT_CLIENT_SECRET
-  #       valueFrom:
-  #         secretKeyRef:
-  #           name: discourse-oidc
-  #           key: client-secret
   extraEnv: []
 
 # ---------------------------------------------------------------------------

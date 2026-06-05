@@ -353,6 +353,48 @@ Credentials are supplied via `discourse.s3.accessKeyId` / `discourse.s3.secretAc
 
 **Cloudflare R2.** Set `discourse.s3.installCorsRule: false` (R2 rejects the `PutBucketCors` call Discourse makes in its CORS-install prereq — set the CORS policy on the bucket manually instead) and `discourse.s3.region: auto`. Point `discourse.s3.endpoint` at the R2 S3 endpoint (`https://<accountid>.r2.cloudflarestorage.com`) and `discourse.s3.cdnUrl` at a public R2 URL or custom domain.
 
+### OIDC / SSO
+
+The chart has a first-class `discourse.oidc.*` block for the `discourse-openid-connect` plugin (Keycloak, Auth0, any OIDC provider) so you configure SSO with named chart values instead of raw `extraEnv`. Non-secret settings render into the ConfigMap; the client secret is wired through the chart's secret machinery (mirroring `discourse.s3`).
+
+Set `discourse.oidc.enabled: true` to turn it on. When disabled (the default) **no** OIDC env vars and **no** secret entry are rendered, so existing installs are unaffected.
+
+| Name | Description | Value |
+| ---- | ----------- | ----- |
+| `discourse.oidc.enabled` | Master toggle; when `false` no OIDC env vars are emitted | `false` |
+| `discourse.oidc.discoveryDocument` | OIDC discovery URL (`.well-known/openid-configuration`) | `""` |
+| `discourse.oidc.clientId` | OAuth client ID registered with the IdP | `""` |
+| `discourse.oidc.authorizeScope` | Scopes requested at authorize time | `"openid email profile"` |
+| `discourse.oidc.usePkce` | Use PKCE for the authorization code flow | `true` |
+| `discourse.oidc.overridesEmail` | Let the IdP's email override the Discourse account email | `false` |
+| `discourse.oidc.rpInitiatedLogout` | Enable RP-initiated logout (log out of the IdP too) | `false` |
+| `discourse.oidc.rpInitiatedLogoutRedirect` | Post-logout redirect URL — blank ⇒ env var omitted (plugin omits `post_logout_redirect_uri`) | `""` |
+| `discourse.oidc.clientSecret` | Inline OAuth client secret (ignored if `existingSecret` is set) | `""` |
+| `discourse.oidc.existingSecret` | Name of an existing Secret holding the client secret | `""` |
+| `discourse.oidc.secretKeys.clientSecret` | Key within the Secret that holds the client secret | `oidc-client-secret` |
+| `discourse.allowedInternalHosts` | SSRF-bypass allowlist (e.g. an internal Keycloak host); pipe-separated for multiple (`a.internal\|b.internal`); emitted as `DISCOURSE_ALLOWED_INTERNAL_HOSTS` only when non-empty. NOT OIDC-specific | `""` |
+
+The **client secret** is supplied one of two ways:
+
+- `existingSecret` + `secretKeys.clientSecret` — reference a pre-existing Kubernetes Secret (preferred for GitOps / Vault / ESO).
+- `clientSecret` — inline value; the chart then creates a managed Secret (discouraged).
+
+> **Don't double-set:** configure OIDC through `discourse.oidc.*`, not `extraEnv`. Setting the same `DISCOURSE_OPENID_CONNECT_*` var via both is last-wins/undefined.
+
+Example (existing secret, internal Keycloak):
+
+```yaml
+discourse:
+  allowedInternalHosts: "keycloak.identity.svc.cluster.local"
+  oidc:
+    enabled: true
+    discoveryDocument: "https://keycloak.identity.svc.cluster.local/realms/myrealm/.well-known/openid-configuration"
+    clientId: "discourse"
+    existingSecret: "discourse-oidc"
+    secretKeys:
+      clientSecret: client-secret
+```
+
 ### Network parameters
 
 | Name | Description | Value |
@@ -448,25 +490,9 @@ discourse:
 
 Some plugins namespace their settings internally with a `discourse_` prefix. For example, the AI plugin registers its enabled setting as `discourse_ai_enabled`. When you apply the `DISCOURSE_` env var convention on top of that, you get `DISCOURSE_DISCOURSE_AI_ENABLED`. This affects the AI, Automation, and Reactions plugins.
 
-### OIDC configuration via extraEnv
+### OIDC configuration
 
-OpenID Connect (and other complex plugin settings) can also be configured entirely through environment variables. This is useful for Keycloak, Auth0, or any OIDC provider:
-
-```yaml
-discourse:
-  extraEnv:
-    - name: DISCOURSE_OPENID_CONNECT_ENABLED
-      value: "true"
-    - name: DISCOURSE_OPENID_CONNECT_DISCOVERY_DOCUMENT
-      value: "https://keycloak.example.com/realms/myrealm/.well-known/openid-configuration"
-    - name: DISCOURSE_OPENID_CONNECT_CLIENT_ID
-      value: "discourse"
-    - name: DISCOURSE_OPENID_CONNECT_CLIENT_SECRET
-      valueFrom:
-        secretKeyRef:
-          name: discourse-oidc
-          key: client-secret
-```
+OpenID Connect (Keycloak, Auth0, any OIDC provider) has a first-class `discourse.oidc.*` block — see [OIDC / SSO](#oidc--sso) above. Use that block rather than `extraEnv`; it renders the non-secret settings into the ConfigMap and wires the client secret through the chart's secret machinery. Don't set the same `DISCOURSE_OPENID_CONNECT_*` var via both `discourse.oidc` and `extraEnv` (last-wins/undefined).
 
 ### Admin UI alternative
 

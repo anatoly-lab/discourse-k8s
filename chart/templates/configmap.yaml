@@ -74,6 +74,31 @@ data:
   {{- end }}
   {{- end }}
 
+  {{- if .Values.discourse.oidc.enabled }}
+  # -- OpenID Connect / SSO (discourse-openid-connect plugin) --
+  # Non-secret OIDC settings; the client secret is injected via secretKeyRef
+  # (see discourse.secretEnvVars) and is deliberately NOT emitted here.
+  DISCOURSE_OPENID_CONNECT_ENABLED: "true"
+  {{- if .Values.discourse.oidc.discoveryDocument }}
+  DISCOURSE_OPENID_CONNECT_DISCOVERY_DOCUMENT: {{ .Values.discourse.oidc.discoveryDocument | quote }}
+  {{- end }}
+  {{- if .Values.discourse.oidc.clientId }}
+  DISCOURSE_OPENID_CONNECT_CLIENT_ID: {{ .Values.discourse.oidc.clientId | quote }}
+  {{- end }}
+  DISCOURSE_OPENID_CONNECT_AUTHORIZE_SCOPE: {{ .Values.discourse.oidc.authorizeScope | quote }}
+  DISCOURSE_OPENID_CONNECT_USE_PKCE: {{ .Values.discourse.oidc.usePkce | quote }}
+  DISCOURSE_OPENID_CONNECT_OVERRIDES_EMAIL: {{ .Values.discourse.oidc.overridesEmail | quote }}
+  DISCOURSE_OPENID_CONNECT_RP_INITIATED_LOGOUT: {{ .Values.discourse.oidc.rpInitiatedLogout | quote }}
+  {{- if .Values.discourse.oidc.rpInitiatedLogoutRedirect }}
+  DISCOURSE_OPENID_CONNECT_RP_INITIATED_LOGOUT_REDIRECT: {{ .Values.discourse.oidc.rpInitiatedLogoutRedirect | quote }}
+  {{- end }}
+  {{- end }}
+
+  {{- if .Values.discourse.allowedInternalHosts }}
+  # -- SSRF-bypass allowlist (e.g. an internal Keycloak) --
+  DISCOURSE_ALLOWED_INTERNAL_HOSTS: {{ .Values.discourse.allowedInternalHosts | quote }}
+  {{- end }}
+
   # -- Serving --
   DISCOURSE_SERVE_STATIC_ASSETS: {{ .Values.discourse.serveStaticAssets | quote }}
   DISCOURSE_FORCE_HTTPS: {{ .Values.discourse.forceHttps | quote }}
