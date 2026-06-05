@@ -405,9 +405,22 @@ discourse:
 | `service.annotations` | Additional annotations for the Service | `{}` |
 | `ingress.enabled` | Enable Ingress resource | `false` |
 | `ingress.className` | Ingress class name | `""` |
+| `ingress.host` | Hostname for the rule + TLS. Empty => derived from `discourse.hostname` | `""` |
+| `ingress.path` | Path for the Ingress rule | `"/"` |
+| `ingress.pathType` | Path type for the Ingress rule | `"Prefix"` |
 | `ingress.annotations` | Additional annotations for the Ingress | `{}` |
-| `ingress.hosts` | Array of Ingress host configurations | `[]` |
-| `ingress.tls` | Array of Ingress TLS configurations | `[]` |
+| `ingress.tls.enabled` | Enable TLS for the Ingress host | `false` |
+| `ingress.tls.secretName` | Secret holding the TLS cert (required when `tls.enabled`) | `""` |
+
+> **Breaking change in 0.11.0: `ingress.*` shape.** The list-form `ingress.hosts[]`/`ingress.tls[]` was replaced by a single-host scalar API. Migration:
+>
+> | Old (≤ 0.10.0) | New (≥ 0.11.0) |
+> | --- | --- |
+> | `ingress.hosts[0].host` | derived from `discourse.hostname` (or set `ingress.host` to override) |
+> | `ingress.hosts[0].paths[0].path` | `ingress.path` |
+> | `ingress.hosts[0].paths[0].pathType` | `ingress.pathType` |
+> | `ingress.tls[0].secretName` | `ingress.tls.secretName` + `ingress.tls.enabled: true` |
+> | `ingress.tls[0].hosts[0]` | derived (same `$host` as the rule) |
 
 ### Resource parameters
 

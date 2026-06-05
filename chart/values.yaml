@@ -366,20 +366,16 @@ service:
 ingress:
   enabled: false
   className: ""
+  # Hostname for the Ingress rule + TLS. Empty => derived from discourse.hostname
+  # (Discourse is single-hostname, so this removes the duplicate host value).
+  host: ""
+  path: "/"
+  pathType: "Prefix"
   annotations: {}
-  # Example:
-  #   hosts:
-  #     - host: forum.example.com
-  #       paths:
-  #         - path: /
-  #           pathType: Prefix
-  hosts: []
-  # Example:
-  #   tls:
-  #     - secretName: forum-tls
-  #       hosts:
-  #         - forum.example.com
-  tls: []
+  tls:
+    enabled: false
+    # Secret holding the TLS cert for the host. Required when tls.enabled.
+    secretName: ""
 
 # ---------------------------------------------------------------------------
 # Unicorn container resources
