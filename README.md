@@ -332,6 +332,27 @@ Ptrace-free, in-process introspection for capturing where a web request is block
 | `persistence.backups.existingClaim` | Name of an existing PVC to use for backups | `""` |
 | `persistence.backups.mountPath` | Mount path for backups inside the container | `/var/www/discourse/public/backups` |
 
+### S3 / R2 storage for user uploads
+
+The chart can offload **user uploads** (avatars, attachments, images) to an S3-compatible bucket (AWS S3, MinIO, Cloudflare R2, GCS interop) instead of the local uploads PVC. Discourse's compiled JS/CSS assets are **always served locally** by the app — the chart never enables the global S3 asset path.
+
+Under the hood the chart emits the SiteSetting-shadow vars `DISCOURSE_ENABLE_S3_UPLOADS=true` + `DISCOURSE_S3_UPLOAD_BUCKET` and **never** the global `DISCOURSE_S3_BUCKET`, so Discourse's `use_s3?` stays false and the compiled assets are never welded onto S3. That means there is no asset-upload init container, no asset CORS policy to manage, and no stale-asset accumulation in the bucket across deploys.
+
+> **Gotcha:** don't set the global `DISCOURSE_S3_BUCKET` yourself via `extraEnv` — it flips `use_s3?` true and welds the compiled assets onto S3, which is exactly what this chart avoids. Use the `discourse.s3.*` values below instead.
+
+| Name | Description | Value |
+| ---- | ----------- | ----- |
+| `discourse.s3.enabled` | Turn on S3/R2 for user uploads | `false` |
+| `discourse.s3.region` | AWS-style region (`auto` for R2, `us-east-1` for MinIO) | `""` |
+| `discourse.s3.bucket` | Upload bucket — maps to the SiteSetting `DISCOURSE_S3_UPLOAD_BUCKET` (may be `bucket` or `bucket/path-prefix`) | `""` |
+| `discourse.s3.endpoint` | Custom S3 endpoint for non-AWS providers (leave empty for real AWS S3) | `""` |
+| `discourse.s3.cdnUrl` | Optional CDN in front of the bucket for serving uploads | `""` |
+| `discourse.s3.installCorsRule` | Install a bucket CORS rule via `PutBucketCors` (set `false` for Cloudflare R2) | `true` |
+
+Credentials are supplied via `discourse.s3.accessKeyId` / `discourse.s3.secretAccessKey`, an `existingSecret`, or `discourse.s3.useIamProfile: true` (EKS IRSA / instance profile). Database backups can also go to S3 via `discourse.s3.backups.enabled` + `discourse.s3.backups.bucket`.
+
+**Cloudflare R2.** Set `discourse.s3.installCorsRule: false` (R2 rejects the `PutBucketCors` call Discourse makes in its CORS-install prereq — set the CORS policy on the bucket manually instead) and `discourse.s3.region: auto`. Point `discourse.s3.endpoint` at the R2 S3 endpoint (`https://<accountid>.r2.cloudflarestorage.com`) and `discourse.s3.cdnUrl` at a public R2 URL or custom domain.
+
 ### Network parameters
 
 | Name | Description | Value |

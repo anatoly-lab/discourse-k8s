@@ -45,19 +45,23 @@ data:
   DISCOURSE_SMTP_ENABLE_START_TLS: {{ .Values.discourse.smtp.enableStartTls | quote }}
 
   {{- if .Values.discourse.s3.enabled }}
-  # -- S3 object storage --
-  # Non-secret S3 settings. Discourse auto-enables S3 once it sees
-  # bucket + region + (IAM | access keys); see values.yaml for the details.
-  # DISCOURSE_USE_S3 is rendered for parity with Discourse's docker S3 template
-  # but is inert in this release -- the bucket/region/creds trio is the switch.
-  DISCOURSE_USE_S3: "true"
+  # -- S3/R2 object storage (USER UPLOADS only) --
+  # Configures S3/R2 for user uploads only; Discourse's compiled JS/CSS assets
+  # stay served locally. We emit the SiteSetting-shadow vars
+  # DISCOURSE_ENABLE_S3_UPLOADS + DISCOURSE_S3_UPLOAD_BUCKET and NEVER the global
+  # DISCOURSE_S3_BUCKET, so use_s3? stays false and assets are never welded onto S3.
+  DISCOURSE_ENABLE_S3_UPLOADS: "true"
+  DISCOURSE_S3_UPLOAD_BUCKET: {{ required "discourse.s3.bucket is required when discourse.s3.enabled" .Values.discourse.s3.bucket | quote }}
   DISCOURSE_S3_REGION: {{ required "discourse.s3.region is required when discourse.s3.enabled" .Values.discourse.s3.region | quote }}
-  DISCOURSE_S3_BUCKET: {{ required "discourse.s3.bucket is required when discourse.s3.enabled" .Values.discourse.s3.bucket | quote }}
   {{- if .Values.discourse.s3.endpoint }}
   DISCOURSE_S3_ENDPOINT: {{ .Values.discourse.s3.endpoint | quote }}
   {{- end }}
   {{- if .Values.discourse.s3.cdnUrl }}
   DISCOURSE_S3_CDN_URL: {{ .Values.discourse.s3.cdnUrl | quote }}
+  {{- end }}
+  {{- if not .Values.discourse.s3.installCorsRule }}
+  # R2 does not support PutBucketCors; skip Discourse's CORS-install prereq.
+  DISCOURSE_S3_INSTALL_CORS_RULE: "false"
   {{- end }}
   {{- if .Values.discourse.s3.useIamProfile }}
   DISCOURSE_S3_USE_IAM_PROFILE: "true"

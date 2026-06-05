@@ -168,35 +168,6 @@ spec:
           {{- end }}
         {{- end }}
 
-        {{- if .Values.s3AssetUpload.enabled }}
-        # ---- Upload precompiled assets to S3/R2 ----
-        # Runs rake s3:upload_assets so Discourse's own precompiled JS/CSS
-        # (including brotli/gzip variants already baked into the image) are
-        # present in the S3/R2 bucket before the web process starts. This is the
-        # precondition for safely enabling s3_cdn_url. Skips objects already in
-        # the bucket by digest, so it's a cheap list-and-skip after first run.
-        # Inherits the same env as warm-css, so DISCOURSE_S3_* creds and the
-        # DISCOURSE_S3_INSTALL_CORS_RULE flag flow through unchanged.
-        - name: upload-assets
-          image: {{ include "discourse.image" . }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["bundle", "exec", "rake", "s3:upload_assets"]
-          envFrom:
-            - configMapRef:
-                name: {{ include "discourse.configmapName" . }}
-          {{- if include "discourse.hasEnvVars" . }}
-          env:
-            {{- include "discourse.secretEnvVars" . | nindent 12 }}
-            {{- with .Values.discourse.extraEnv }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-          {{- end }}
-          {{- with .Values.s3AssetUpload.resources }}
-          resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-        {{- end }}
-
         # ---- Create admin user (first boot only, idempotent) ----
         {{- if or .Values.discourse.admin.existingSecret .Values.discourse.admin.password }}
         - name: create-admin

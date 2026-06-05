@@ -104,29 +104,35 @@ discourse:
     existingSecret: ""
     secretKey: secret-key-base
 
-  # -- S3 object storage (optional) --
-  # Stores uploads (and optionally backups) in an S3-compatible bucket instead
-  # of the local uploads PVC. Works with AWS S3, MinIO, Cloudflare R2, GCS
-  # (via the interop endpoint), etc.
+  # -- S3/R2 object storage for USER UPLOADS (optional) --
+  # Stores user uploads (and optionally backups) in an S3-compatible bucket
+  # instead of the local uploads PVC. Works with AWS S3, MinIO, Cloudflare R2,
+  # GCS (via the interop endpoint), etc.
   #
-  # IMPORTANT: there is no single "enable" env var in Discourse. The engine's
-  # GlobalSetting.use_s3? turns itself on automatically once it sees a bucket,
-  # a region, AND credentials (or an IAM profile). So setting bucket + region +
-  # keys/IAM below is what actually activates S3. (We still render
-  # DISCOURSE_USE_S3 for parity with Discourse's official docker S3 template,
-  # but in this release it is a harmless no-op -- the trio above is the switch.)
+  # S3/R2 is used for USER UPLOADS only; Discourse's compiled JS/CSS assets are
+  # always served locally by the app (optionally fronted by a CDN via
+  # DISCOURSE_CDN_URL / a proxy). The chart never sets the global
+  # DISCOURSE_S3_BUCKET, so use_s3? stays false and assets are never welded onto
+  # S3. It emits the SiteSetting-shadow vars DISCOURSE_ENABLE_S3_UPLOADS +
+  # DISCOURSE_S3_UPLOAD_BUCKET instead.
   s3:
     enabled: false
     # AWS-style region. For S3-compatible providers use the value the provider
     # expects (e.g. "auto" for R2, "us-east-1" as a generic default for MinIO).
     region: ""
-    # Bucket that holds uploads. May be "bucket" or "bucket/path-prefix".
+    # Bucket that holds user uploads. May be "bucket" or "bucket/path-prefix".
+    # Maps to the SiteSetting DISCOURSE_S3_UPLOAD_BUCKET.
     bucket: ""
     # Custom endpoint for non-AWS providers (MinIO / R2 / GCS). Leave empty for
     # real AWS S3. Must be a full URL, e.g. https://<accountid>.r2.cloudflarestorage.com
     endpoint: ""
     # Optional CDN in front of the bucket for serving uploads.
     cdnUrl: ""
+    # Whether Discourse installs a CORS rule on the bucket via PutBucketCors as
+    # part of its S3 setup prereq. Defaults true to match Discourse's own
+    # default. Set to false for Cloudflare R2, which rejects the PutBucketCors
+    # call -- set the CORS policy on the R2 bucket manually instead.
+    installCorsRule: true
     # When true, authenticate via the pod's IAM role (EKS IRSA / instance
     # profile) and OMIT the access keys entirely -- no secret is rendered.
     useIamProfile: false
@@ -160,16 +166,19 @@ discourse:
 
   # -- Extra environment variables --
   # Passed directly to all Discourse containers (unicorn, sidekiq, migrate).
-  # Use for any env vars not covered above.
+  # Use for any env vars not covered above (e.g. plugin toggles, OIDC config).
+  # Do NOT set the global DISCOURSE_S3_BUCKET here: it flips use_s3? true and
+  # welds the compiled assets onto S3, which this chart deliberately avoids --
+  # use the discourse.s3.* values for uploads-only S3/R2 instead.
   # Example:
   #   extraEnv:
-  #     - name: DISCOURSE_S3_BUCKET
-  #       value: "my-bucket"
-  #     - name: DISCOURSE_S3_SECRET_ACCESS_KEY
+  #     - name: DISCOURSE_OPENID_CONNECT_ENABLED
+  #       value: "true"
+  #     - name: DISCOURSE_OPENID_CONNECT_CLIENT_SECRET
   #       valueFrom:
   #         secretKeyRef:
-  #           name: my-secret
-  #           key: s3-secret
+  #           name: discourse-oidc
+  #           key: client-secret
   extraEnv: []
 
 # ---------------------------------------------------------------------------
@@ -235,18 +244,6 @@ stylesheetWarmup:
     # pod's combined app-container limits.
     limits:
       memory: 3Gi
-
-# ---------------------------------------------------------------------------
-# S3/R2 asset upload
-# ---------------------------------------------------------------------------
-# Uploads Discourse's precompiled assets (incl. brotli/gzip variants) to the
-# S3/R2 bucket on pod start, via `rake s3:upload_assets`. REQUIRED before
-# enabling s3_cdn_url (DISCOURSE_S3_CDN_URL) — otherwise Discourse serves its
-# own assets/br/*.js from the CDN and they 404. Runs every pod start but skips
-# objects already in the bucket (digest compare), so it's a cheap list-and-skip
-# after the first run. No effect unless S3 uploads are configured. Opt-in.
-s3AssetUpload:
-  enabled: false
 
 # ---------------------------------------------------------------------------
 # Diagnostics (ptrace-free, in-process introspection)
