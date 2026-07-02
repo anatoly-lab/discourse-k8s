@@ -158,8 +158,19 @@ jobs:
     needs: [build-amd64, build-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Override the workflow default (contents: read): the release step needs
+    # contents: write to create a GitHub Release; packages: write is still
+    # required to push the merged manifest.
+    permissions:
+      contents: write
+      packages: write
 
     steps:
+      # Needed only so the release step can read the pinned Discourse version
+      # out of docker/Dockerfile for the release notes.
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -190,3 +201,44 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+
+      # ===========================================================================
+      # Publish a GitHub Release for this image tag
+      # ===========================================================================
+      # A container image can't be a Release "asset" (it lives in GHCR), so the
+      # release body carries the pull command, the digest for pinning, and a link
+      # to the package page. This makes the tag visible on the repo Releases page
+      # instead of only under the org's package registry.
+      # ===========================================================================
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/discourse-k8s
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          discourse_version="$(grep -oP 'ARG DISCOURSE_VERSION=\K\S+' docker/Dockerfile)"
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{ .Manifest.Digest }}')"
+          {
+            echo "Multi-arch (linux/amd64 + linux/arm64) Discourse image."
+            echo
+            echo "**Bundled Discourse:** \`${discourse_version}\`"
+            echo
+            echo "### Pull"
+            echo '```bash'
+            echo "docker pull ${IMAGE}:${VERSION}"
+            echo '```'
+            echo
+            echo "### Pin by digest"
+            echo '```'
+            echo "${IMAGE}@${digest}"
+            echo '```'
+            echo
+            echo "📦 [Package page](https://github.com/${REPO}/pkgs/container/discourse-k8s)"
+          } > release-notes.md
+          gh release create "docker/${VERSION}" \
+            --repo "${REPO}" \
+            --title "Discourse image ${VERSION}" \
+            --notes-file release-notes.md \
+            --verify-tag

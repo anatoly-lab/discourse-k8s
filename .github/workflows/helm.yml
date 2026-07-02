@@ -51,6 +51,12 @@ jobs:
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Override the workflow default (contents: read): the release step needs
+    # contents: write to create a GitHub Release; packages: write is still
+    # required to push the chart OCI artifact.
+    permissions:
+      contents: write
+      packages: write
 
     steps:
       - name: Checkout
@@ -85,3 +91,40 @@ jobs:
         run: |
           helm push "discourse-${{ steps.version.outputs.value }}.tgz" \
             oci://ghcr.io/${{ github.repository_owner }}/helm-charts
+
+      # ===========================================================================
+      # Publish a GitHub Release for this chart tag
+      # ===========================================================================
+      # Unlike the image, the packaged chart IS a real file, so we attach the
+      # discourse-<version>.tgz as a downloadable release asset and put the OCI
+      # install instructions in the body.
+      # ===========================================================================
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          app_version="$(grep -oP '^appVersion:\s*"?\K[^"]+' chart/Chart.yaml)"
+          {
+            echo "Helm chart for deploying Discourse on Kubernetes."
+            echo
+            echo "**appVersion (Discourse):** \`${app_version}\`"
+            echo
+            echo "### Install (OCI)"
+            echo '```bash'
+            echo "helm upgrade --install discourse \\"
+            echo "  oci://ghcr.io/${OWNER}/helm-charts/discourse \\"
+            echo "  --version ${VERSION} -n discourse --create-namespace"
+            echo '```'
+            echo
+            echo "The packaged chart \`discourse-${VERSION}.tgz\` is attached below."
+          } > release-notes.md
+          gh release create "chart/v${VERSION}" \
+            --repo "${REPO}" \
+            --title "Helm chart v${VERSION}" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            "discourse-${VERSION}.tgz"
