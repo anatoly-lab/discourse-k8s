@@ -1,0 +1,46 @@
+{{- if .Values.networkPolicy.enabled }}
+# Ingress: only the web port, optionally restricted to specific peers.
+# Egress: wide open by default (egress.allowAll); when tightened, DNS stays
+# allowed unconditionally — without it every outbound hostname lookup fails
+# and the breakage is much harder to diagnose than a blocked connection.
+# Kubelet probes are exempt from NetworkPolicy, so liveness/readiness keep
+# working regardless of ingress rules.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "discourse.fullname" . }}
+  labels:
+    {{- include "discourse.labels" . | nindent 4 }}
+  {{- if or .Values.commonAnnotations }}
+  annotations:
+    {{- include "discourse.commonAnnotations" . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "discourse.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 3000
+          protocol: TCP
+      {{- with .Values.networkPolicy.ingress.from }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  egress:
+    {{- if .Values.networkPolicy.egress.allowAll }}
+    - {}
+    {{- else }}
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- with .Values.networkPolicy.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- end }}
+{{- end }}

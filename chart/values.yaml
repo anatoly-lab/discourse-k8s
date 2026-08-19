@@ -470,5 +470,55 @@ securityContext:
     # unconfined (the K8s default when this is unset).
     type: RuntimeDefault
 
+# ---------------------------------------------------------------------------
+# NetworkPolicy
+# ---------------------------------------------------------------------------
+# Limits the blast radius of a compromised pod: without a policy, any pod on
+# the cluster network can reach Discourse, and a compromised Discourse pod can
+# reach everything (other apps' databases, the K8s API, cloud metadata
+# endpoints). Requires a CNI that enforces NetworkPolicy (Cilium, Calico;
+# k3s' default flannel does NOT enforce it — policies apply cleanly but do
+# nothing).
+#
+# The Redis sidecar is unaffected either way: it shares the pod's network
+# namespace and is reached over localhost, which NetworkPolicy never polices.
+networkPolicy:
+  enabled: false
+  ingress:
+    # Peers allowed to reach the web port (3000). Empty list = any peer.
+    # Typically restrict to the ingress controller's namespace, e.g.:
+    #   from:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: ingress-nginx
+    from: []
+  egress:
+    # true: all outbound traffic allowed (policy only restricts ingress).
+    # false: outbound is denied except DNS (UDP/TCP 53) and the `extra` rules
+    # below — which must then cover PostgreSQL (CNPG), SMTP, S3/R2, OIDC
+    # (Keycloak), and any plugin outbound calls (discourse-ai APIs, onebox
+    # link previews fetch arbitrary URLs), or those features break silently.
+    allowAll: true
+    # Additional egress rules (NetworkPolicyEgressRule list), used only when
+    # allowAll is false. Example — CNPG in-cluster plus HTTPS to the internet:
+    #   extra:
+    #     - to:
+    #         - namespaceSelector:
+    #             matchLabels:
+    #               kubernetes.io/metadata.name: cnpg-system
+    #       ports:
+    #         - port: 5432
+    #           protocol: TCP
+    #     - to:
+    #         - ipBlock:
+    #             cidr: 0.0.0.0/0
+    #             except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    #       ports:
+    #         - port: 443
+    #           protocol: TCP
+    #         - port: 587
+    #           protocol: TCP
+    extra: []
+
 restartPolicy: Always
 terminationGracePeriodSeconds: 60

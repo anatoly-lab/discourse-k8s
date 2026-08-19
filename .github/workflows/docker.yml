@@ -81,6 +81,10 @@ jobs:
         with:
           context: docker/
           push: ${{ steps.version.outputs.is_release == 'true' }}
+          # On non-release builds nothing is pushed, so load the image into the
+          # local Docker daemon for the Trivy scan below. Mutually exclusive
+          # with push (exactly one is true per run).
+          load: ${{ steps.version.outputs.is_release == 'false' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # DISCOURSE_VERSION is pinned in the Dockerfile (e.g., v2026.3.0-latest).
@@ -89,6 +93,35 @@ jobs:
           cache-from: type=gha,scope=build-amd64
           cache-to: type=gha,mode=max,scope=build-amd64
           platforms: linux/amd64
+
+      # =========================================================================
+      # Vulnerability scan (amd64 only — CVE results are identical across arches)
+      # =========================================================================
+      # Non-release: scans the locally loaded image. Release: scans the pushed
+      # -amd64 ref from GHCR (Trivy pulls it; we're already logged in). On a
+      # release a failed scan fails this job, which skips the manifest job — the
+      # versioned multi-arch tag and :latest are never created, so a critically
+      # vulnerable release is effectively blocked even though the -amd64
+      # platform tag was already pushed.
+      #
+      # Gate on CRITICAL only: the Debian base always carries a tail of
+      # low/medium CVEs with no fixed version; gating wider would mean a
+      # permanently red pipeline. --ignore-unfixed skips CVEs Debian has not
+      # shipped a fix for (nothing actionable on our side).
+      # =========================================================================
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          exit-code: "1"
+          severity: CRITICAL
+          ignore-unfixed: true
+          # OS packages + app dependencies (gems, pnpm packages) baked into the
+          # image; secret scanning off — it flags Discourse's own test fixtures.
+          scanners: vuln
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ github.token }}
 
   # ===========================================================================
   # Build arm64 image on a native ARM runner
