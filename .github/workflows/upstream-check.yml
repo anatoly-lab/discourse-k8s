@@ -1,0 +1,68 @@
+# =============================================================================
+# Upstream Discourse release check
+# =============================================================================
+# Runs daily. Compares the newest `v*-latest*` tag on discourse/discourse with
+# the DISCOURSE_VERSION pinned in docker/Dockerfile. If upstream is newer and
+# no open issue already tracks it, opens a `discourse-release` issue so GitHub
+# notifies the maintainers. Purely informational — the bump itself stays manual.
+# =============================================================================
+
+name: Upstream check
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Compare pinned vs upstream
+        id: cmp
+        run: |
+          pinned="$(grep -oP 'ARG DISCOURSE_VERSION=\K\S+' docker/Dockerfile)"
+          upstream="$(git ls-remote --tags https://github.com/discourse/discourse 'refs/tags/v*-latest*' \
+            | awk '{print $2}' | grep -v '\^{}$' | sed 's#refs/tags/##' | sort -V | tail -n1)"
+          echo "pinned=${pinned}"
+          echo "upstream=${upstream}"
+          {
+            echo "pinned=${pinned}"
+            echo "upstream=${upstream}"
+            echo "outdated=$([ "${pinned}" != "${upstream}" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open issue if missing
+        if: steps.cmp.outputs.outdated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PINNED: ${{ steps.cmp.outputs.pinned }}
+          UPSTREAM: ${{ steps.cmp.outputs.upstream }}
+        run: |
+          title="Discourse ${UPSTREAM} released (pinned: ${PINNED})"
+          gh label create discourse-release --color 0E8A16 --force \
+            --description "New upstream Discourse tag available"
+          if gh issue list --state open --label discourse-release --search "\"${UPSTREAM}\" in:title" \
+               --json number --jq 'length' | grep -qv '^0$'; then
+            echo "Issue for ${UPSTREAM} already open, skipping"
+            exit 0
+          fi
+          gh issue create --title "${title}" --label discourse-release --body "$(cat <<MD
+          Upstream tag: https://github.com/discourse/discourse/releases/tag/${UPSTREAM}
+          Compare: https://github.com/discourse/discourse/compare/${PINNED}...${UPSTREAM}
+
+          Pinned in \`docker/Dockerfile\` (\`ARG DISCOURSE_VERSION\`) and \`chart/Chart.yaml\` (\`appVersion\`): \`${PINNED}\`
+
+          Opened automatically by \`.github/workflows/upstream-check.yml\`.
+          MD
+          )"
