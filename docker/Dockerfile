@@ -24,7 +24,7 @@ FROM ${BASE_IMAGE}
 
 # Re-declare after FROM so they're available in RUN and LABEL instructions.
 ARG BASE_IMAGE
-ARG DISCOURSE_VERSION=v2026.11.0-latest
+ARG DISCOURSE_VERSION=v2026.10.0
 
 LABEL org.opencontainers.image.title="Discourse (AnkiMCP)" \
       org.opencontainers.image.description="Discourse forum with plugins and precompiled assets for Kubernetes" \
@@ -76,6 +76,36 @@ WORKDIR /var/www/discourse
 
 RUN sudo -u discourse git fetch --depth 1 origin tag "${DISCOURSE_VERSION}" && \
     sudo -u discourse git checkout "${DISCOURSE_VERSION}"
+
+# =============================================================================
+# Replace Ruby's bundled json default gem with the version Discourse locks
+# =============================================================================
+# Ruby 4.0 in discourse/base:slim ships json as a DEFAULT gem (json 2.18.0 as
+# of Ruby 4.0.9), which is vulnerable to CVE-2026-33210 (CRITICAL; fixed in
+# >= 2.19.2) and fails the Trivy gate. Discourse itself runs on the json from
+# its Gemfile.lock (vendor/bundle), so the default copy only serves plain
+# `ruby`/`gem` outside the bundle -- but it is still on disk and still loadable.
+#
+# Default gems cannot be `gem uninstall`ed and `gem install --default` does not
+# replace them, so we install the locked version as a regular system gem and
+# delete the default copy (stdlib json.rb + json/, the json ext .so files, and
+# its default gemspec). Plain `require "json"` then resolves to the new gem.
+#
+# The target version is read from Discourse's Gemfile.lock, so the system json
+# tracks the bundle on every Discourse bump. Skipped once the base image's
+# default json is already >= the locked version.
+# =============================================================================
+RUN set -eu; \
+    want="$(grep -oP '^    json \(\K[^)]+' Gemfile.lock)"; \
+    have="$(ruby -e 'print Gem::Specification.find_all_by_name("json").find(&:default_gem?)&.version')"; \
+    if [ -n "$have" ] && ruby -e 'exit Gem::Version.new(ARGV[0]) < Gem::Version.new(ARGV[1])' "$have" "$want"; then \
+        gem install json -v "$want" --no-document; \
+        rubylibdir="$(ruby -e 'print RbConfig::CONFIG["rubylibdir"]')"; \
+        archdir="$(ruby -e 'print RbConfig::CONFIG["archdir"]')"; \
+        rm -rf "$rubylibdir/json.rb" "$rubylibdir/json" "$archdir/json" \
+            "$(gem env gemdir)/specifications/default/json-${have}.gemspec"; \
+    fi; \
+    ruby -e 'require "json"; abort("system json #{JSON::VERSION} < locked #{ARGV[0]}") if Gem::Version.new(JSON::VERSION) < Gem::Version.new(ARGV[0])' "$want"
 
 # =============================================================================
 # Diagnostics gem: sigdump
